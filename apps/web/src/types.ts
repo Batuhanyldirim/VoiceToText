@@ -74,3 +74,74 @@ export interface SSEPayload {
   percent?: number;
   message?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Clinical note generation
+// ---------------------------------------------------------------------------
+
+/** Lifecycle status of a note-generation job (mirrors the transcription job). */
+export type NoteJobStatus = "queued" | "running" | "done" | "error";
+
+/** Stage names emitted by note_core's progress callback / SSE stream. */
+export type NoteStage = "start" | "generating" | "done" | "error";
+
+/** A single selectable note template, as returned by GET /notes/templates. */
+export interface NoteTemplate {
+  key: string;
+  label: string;
+  description: string;
+}
+
+/** GET /notes/templates response. */
+export interface NoteTemplatesResponse {
+  templates: NoteTemplate[];
+  provider: string;
+  cloud_enabled: boolean;
+}
+
+/** Body for POST /notes. */
+export interface CreateNoteBody {
+  transcript: string;
+  template: string;
+  template_text?: string;
+  provider?: string;
+  model?: string;
+}
+
+/** POST /notes response. */
+export interface CreateNoteResponse {
+  note_id: string;
+  status: NoteJobStatus;
+}
+
+/** Structured result from note_core.NoteResult (via GET /notes/{id}). */
+export interface NoteResult {
+  provider: string;
+  model: string;
+  template: string;
+  note: string;
+  stopped_early: boolean;
+  usage: Record<string, unknown>;
+}
+
+/** GET /notes/{id} response — the note job status + result. */
+export interface Note {
+  note_id: string;
+  status: NoteJobStatus;
+  provider: string | null;
+  model: string | null;
+  template: string | null;
+  note: string | null;
+  result: NoteResult | null;
+  error: string | null;
+}
+
+/**
+ * Payload carried by the named SSE events on /notes/{id}/events. During
+ * "generating" the server sends incremental text in `delta`.
+ */
+export interface NoteSSEPayload {
+  stage?: NoteStage;
+  delta?: string;
+  message?: string;
+}

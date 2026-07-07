@@ -1,0 +1,23 @@
+[project]
+name = "note-core"
+version = "0.1.0"
+description = "Clinical note generation from transcripts via a pluggable AI provider (local Ollama default, Claude opt-in)"
+requires-python = ">=3.11,<3.12"
+
+# note-core is deliberately light: the default (Ollama) path talks plain HTTP,
+# so the only hard dependency is an HTTP client. The Claude opt-in provider needs
+# the Anthropic SDK — kept as an optional extra so the local-only install stays
+# minimal and offline. Install it with:  uv sync --extra claude
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+claude = ["anthropic>=0.49"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/note_core"]

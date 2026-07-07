@@ -1,10 +1,12 @@
 # stt-api — FastAPI backend
 
-A thin local backend that wraps the shared pipeline (`stt_core`) for the web app.
-Single user, single process, bound to `127.0.0.1`. It imports `stt_core` and
-calls `transcribe(...)` directly (not via the CLI) — see
-[`../../specs/adr/0007-shared-core-import-not-subprocess.md`](../../specs/adr/0007-shared-core-import-not-subprocess.md)
-and [`../../specs/adr/0008-fastapi-inprocess-jobs-sse.md`](../../specs/adr/0008-fastapi-inprocess-jobs-sse.md).
+A thin local backend that wraps the shared libraries (`stt_core` for
+transcription, `note_core` for clinical notes) for the web app. Single user,
+single process, bound to `127.0.0.1`. It imports the cores and calls
+`transcribe(...)` / `generate(...)` directly (not via the CLI) — see
+[`../../specs/adr/0007-shared-core-import-not-subprocess.md`](../../specs/adr/0007-shared-core-import-not-subprocess.md),
+[`../../specs/adr/0008-fastapi-inprocess-jobs-sse.md`](../../specs/adr/0008-fastapi-inprocess-jobs-sse.md),
+and [`../../specs/adr/0009-clinical-note-pluggable-provider.md`](../../specs/adr/0009-clinical-note-pluggable-provider.md).
 
 ## Setup
 
@@ -38,6 +40,27 @@ a shell that has sourced `env.sh`, or run diarization-free jobs with
 | `GET /jobs/{id}` | Status poll: `{status, stage, percent, result, error, original_name}`. `status` ∈ `queued\|running\|done\|error`; `result` is the `TranscribeResult` dict when done. |
 | `GET /jobs/{id}/events` | **SSE** stream of progress events (`stage`, `percent` during transcription, `message`); emits `ping` keepalives and a terminal `done`/`error` event. |
 | `GET /jobs/{id}/download/{fmt}` | Download the result as `txt`, `srt`, or `json` (available once `status == done`); filename derives from the original upload. |
+
+### Clinical note endpoints
+
+Turn a completed transcript into a structured clinical note (`note_core`).
+Local by default; cloud opt-in. → [ADR-0009](../../specs/adr/0009-clinical-note-pluggable-provider.md).
+
+| Method + path | Purpose |
+|---|---|
+| `GET /notes/templates` | Available templates: `soap`, `hp`, plus a `free` paste option (`TEMPLATE_CHOICES`). |
+| `POST /notes` | Body (JSON): `transcript`, `template` (`soap`\|`hp`\|`free`), `template_text` (required when `template=="free"`), optional `provider`, optional `model` → `{note_id, status}`. Other `NoteOptions` (`temperature`, `num_ctx`, `max_tokens`) are **not** accepted over HTTP — they use server-side defaults. Runs generation on the same worker. |
+| `GET /notes/{id}` | Status poll: `{status, stage, note, result, error}`; `result` is the `NoteResult` dict when done. |
+| `GET /notes/{id}/events` | **SSE** stream of token deltas (`stage`, `delta` during `generating`), terminal `done`/`error`. Poll `GET /notes/{id}` as a fallback. |
+
+**Providers.** Default `ollama` (local, offline — the transcript never leaves the
+machine). `claude` is **opt-in only**: the API refuses it (no data sent) unless
+server env `STT_NOTE_PROVIDER=claude` is set and a token
+(`STT_CLAUDE_API_KEY`/`ANTHROPIC_API_KEY`) is present. The token is read only from
+server env, never accepted from the browser, logged, or returned. The default
+local model is `qwen2.5:32b-instruct` (start `ollama serve` in a shell that
+sourced `env.sh` so `OLLAMA_MODELS` is honored). Install the cloud SDK with
+`uv sync --extra claude`.
 
 ## How it works
 

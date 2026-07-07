@@ -7,18 +7,23 @@
 ## What this is
 
 A local, private tool that turns an audio **or video** file into a
-speaker-labeled transcript (`Speaker 1: … / Speaker 2: …`). Runs entirely on
-this Mac (CPU). It now ships in three forms sharing one pipeline library:
+speaker-labeled transcript (`Speaker 1: … / Speaker 2: …`), and optionally into a
+**structured clinical note draft**. Runs entirely on this Mac (CPU; local LLM via
+Ollama). It ships as shared pipeline libraries plus thin CLI/API/web wrappers:
 
-- **`stt_core`** ([`packages/core`](packages/core)) — the pipeline as an
-  importable function. Holds the load-bearing version pins.
+- **`stt_core`** ([`packages/core`](packages/core)) — the transcription pipeline
+  as an importable function. Holds the load-bearing version pins.
+- **`note_core`** ([`packages/note-core`](packages/note-core)) — pure clinical-note
+  generation (`generate(transcript, opts, progress) -> NoteResult`) via a
+  **pluggable AI provider** (local Ollama default, Claude opt-in). → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
 - **CLI** ([`apps/cli`](apps/cli)) — thin `transcribe` wrapper; same flags/output as before.
-- **API** ([`apps/api`](apps/api)) — FastAPI backend (upload → job → live progress → download).
+- **API** ([`apps/api`](apps/api)) — FastAPI backend (upload → job → live progress → download; plus note endpoints).
 - **Web** ([`apps/web`](apps/web)) — Vite + React + TS + MUI UI (built on the API).
 
 Product promise is unchanged: **point it at a file, get a transcript — no flags
-required.** The web UI adds a **no-terminal-needed** path. Full context in
-[`specs/product.md`](specs/product.md).
+required.** The web UI adds a **no-terminal-needed** path, and now a
+transcript → **clinical note draft** step (local by default; PHI stays on-device).
+Full context in [`specs/product.md`](specs/product.md).
 
 ## Monorepo map
 
@@ -29,13 +34,14 @@ stt-diarization-prototype/
 ├── pyproject.toml            # uv workspace root: members = packages/*, apps/cli, apps/api
 ├── uv.lock                   # ONE lockfile for all Python packages
 ├── specs/                    # product/tech/structure/requirements/design + adr/ + tasks/
-├── packages/core/            # stt-core: shared pipeline (HOLDS THE VERSION PINS)
+├── packages/core/            # stt-core: shared transcription pipeline (HOLDS THE VERSION PINS)
+├── packages/note-core/       # note-core: pure clinical-note generation (pluggable provider; ADR-0009)
 ├── apps/cli/                 # stt-cli: thin CLI wrapper (transcribe)
-├── apps/api/                 # stt-api: FastAPI backend + in-process job worker
+├── apps/api/                 # stt-api: FastAPI backend + in-process job worker (transcribe + notes)
 └── apps/web/                 # Vite+React+TS+MUI frontend (separate npm project, NOT in the uv workspace)
 ```
 
-The 3 Python packages form **one uv workspace** (one `uv.lock`, editable
+The Python packages form **one uv workspace** (one `uv.lock`, editable
 interdependencies via `[tool.uv.sources] stt-core = { workspace = true }`). The
 web app is a **separate plain npm project** — not in the uv workspace, not pnpm.
 → [`ADR-0006`](specs/adr/0006-monorepo-uv-workspace.md)
@@ -111,6 +117,26 @@ cd apps/web && npm install && npm run dev     # Vite dev server on http://localh
 Run the API in another terminal first — the UI talks to it. See
 [`apps/web/README.md`](apps/web/README.md).
 
+### Clinical note generation (transcript → note)
+
+Local by default (Ollama), so PHI never leaves the Mac. Install Ollama and pull
+the default model once:
+
+```bash
+brew install ollama
+source env.sh                                 # sets OLLAMA_MODELS (into models/ollama), STT_NOTE_PROVIDER, STT_NOTE_MODEL
+ollama serve &                                # start in a shell that sourced env.sh
+ollama pull qwen2.5:32b-instruct              # ~20 GB; lands in models/ollama
+```
+
+Then, from a completed transcript, generate a note via the API note endpoints:
+`GET /notes/templates` · `POST /notes` · `GET /notes/{id}` (poll) ·
+`GET /notes/{id}/events` (SSE token deltas). In the web UI: transcript viewer →
+pick a template (SOAP / H&P / paste a format) → live-streamed note → copy /
+download `.md`. Cloud (Claude) is **opt-in only** — set `STT_NOTE_PROVIDER=claude`
+plus `STT_CLAUDE_API_KEY` in server env (`uv sync --extra claude` for the SDK); a
+UI banner warns that the transcript is sent off-device.
+
 ### The PASS/FAIL gate (behavioral — no unit suite)
 
 ```bash
@@ -123,6 +149,12 @@ transcribe samples/conversation.wav               # add --model small to go ~4x 
 text. Via the CLI: check `out/conversation.txt`. Via the API: upload the sample
 and confirm `result.num_speakers ≥ 2` (poll `GET /jobs/{id}`). Any change must
 still pass this gate.
+
+**Note gate:** with `ollama serve` running, generating a note from that
+transcript on the default local provider must produce all five sections (A–E)
+including a populated **"Clinician Review Needed"**, flag an ambiguous term
+rather than silently "correcting" it, and keep the cloud path refused unless
+`STT_NOTE_PROVIDER=claude` + a token are set.
 
 ## Conventions
 
@@ -157,6 +189,11 @@ still pass this gate.
   gated pyannote meta-model. → [`ADR-0005`](specs/adr/0005-diarizer-component-fallback.md)
 - **Do NOT** accept `HF_TOKEN` from the browser or log/return it. The API reads
   it once from server env only. → [`ADR-0008`](specs/adr/0008-fastapi-inprocess-jobs-sse.md)
+- **Do NOT** default to or hardwire the cloud note provider, or send a transcript
+  off-device on the default path. Ollama is the local default; Claude is gated
+  behind `STT_NOTE_PROVIDER=claude` + a server-env token (never logged/returned),
+  and Ollama models must stay under `OLLAMA_MODELS` (in the project).
+  → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md), [`ADR-0003`](specs/adr/0003-self-contained-caches.md)
 
 ## Where to look
 
@@ -170,16 +207,19 @@ still pass this gate.
 | Know *why* a decision was made | [`specs/adr/`](specs/adr/) |
 | Run/extend the API | [`apps/api/README.md`](apps/api/README.md) |
 | Run/extend the web UI | [`apps/web/README.md`](apps/web/README.md) |
+| Understand clinical note generation | [`specs/adr/0009-clinical-note-pluggable-provider.md`](specs/adr/0009-clinical-note-pluggable-provider.md) + [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md) |
 | Add a feature or refactor | copy [`specs/tasks/TEMPLATE.md`](specs/tasks/TEMPLATE.md) |
 
-## Planned / in-flight work
+## Shipped features
 
-- **Clinical note generation** (approved, not started) — turn a transcript into a
-  structured clinical note via a **pluggable AI provider** (local Ollama by
-  default, Claude opt-in; PHI stays local). Full plan + operational knowledge +
-  the clinical prompt are in
-  [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md).
-  **A new chat continuing this work should start by reading that file.**
+- **Clinical note generation** — turn a transcript into a structured clinical
+  **note draft** via a **pluggable AI provider** (local Ollama by default, Claude
+  opt-in; PHI stays local). Pure logic in [`packages/note-core`](packages/note-core);
+  API note endpoints + web note screens on top. Full plan, operational knowledge,
+  and the clinical prompt are in
+  [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md);
+  the decision is [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
+  (REQ-100–105).
 
 ## How to add a feature (the spec-driven loop)
 

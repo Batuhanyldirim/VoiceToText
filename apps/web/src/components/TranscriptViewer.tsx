@@ -19,6 +19,7 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import RecordVoiceOverRoundedIcon from "@mui/icons-material/RecordVoiceOverRounded";
 import TranslateRoundedIcon from "@mui/icons-material/TranslateRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
@@ -36,6 +37,7 @@ interface TranscriptViewerProps {
   result: JobResult;
   file: File | null;
   onReset: () => void;
+  onGenerateNote: () => void;
 }
 
 export default function TranscriptViewer({
@@ -43,6 +45,7 @@ export default function TranscriptViewer({
   result,
   file,
   onReset,
+  onGenerateNote,
 }: TranscriptViewerProps) {
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
@@ -157,6 +160,13 @@ export default function TranscriptViewer({
               useFlexGap
               sx={{ flexWrap: "wrap" }}
             >
+              <Button
+                variant="contained"
+                startIcon={<DescriptionRoundedIcon />}
+                onClick={onGenerateNote}
+              >
+                Generate clinical note
+              </Button>
               <Button
                 variant="outlined"
                 startIcon={<ContentCopyRoundedIcon />}

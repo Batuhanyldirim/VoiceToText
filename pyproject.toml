@@ -12,6 +12,7 @@ members = ["packages/*", "apps/cli", "apps/api"]
 
 [tool.uv.sources]
 stt-core = { workspace = true }
+note-core = { workspace = true }
 
 # Convenience: `uv run transcribe ...` from the repo root resolves the CLI.
 [dependency-groups]

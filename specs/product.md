@@ -6,7 +6,8 @@ Read alongside [`tech.md`](tech.md) and [`structure.md`](structure.md).*
 ## Purpose
 
 Turn a recording of a conversation into a **speaker-labeled transcript** —
-who said what — running entirely on the user's own Mac.
+who said what — running entirely on the user's own Mac, and optionally into a
+**structured clinical note draft** for clinician review.
 
 ## Who it's for
 
@@ -24,6 +25,24 @@ results.
    **upload** a file, watch **live progress**, then read the **transcript
    viewer** and download `.txt`/`.srt`/`.json`. Runs against a local API on
    `127.0.0.1` — still fully offline, audio never leaves the machine.
+
+## From transcript to clinical note (optional next step)
+
+After a transcript is ready, the user can turn it into a **structured clinical
+note** — a patient–doctor conversation rendered as an accurate, organized note
+(SOAP, H&P, or a pasted sample format). Two promises govern this step:
+
+- **It's a draft for clinician review, never a finalized record.** The note keeps
+  a "Clinician Review Needed" section that flags unclear, contradictory, or
+  possibly-misheard items instead of silently "fixing" them.
+- **Local by default, so PHI stays on the machine.** The AI backend is
+  pluggable: a **local model (Ollama) is the default** and the transcript never
+  leaves the Mac. A cloud model (Claude) is an **explicit opt-in** the operator
+  turns on via server env — and when it's on, the UI warns that the transcript
+  will be sent off-device (use only with authorization). See
+  [`adr/0009-clinical-note-pluggable-provider.md`](adr/0009-clinical-note-pluggable-provider.md).
+
+The note streams in live and is copy/download-able as Markdown.
 
 ## The product promise (the UX contract)
 

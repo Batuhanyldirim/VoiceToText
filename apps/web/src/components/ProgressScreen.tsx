@@ -13,7 +13,13 @@ import {
 } from "@mui/material";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import type { JobResult, SSEPayload, Stage } from "../types";
-import { getJob, jobEventsUrl } from "../config/api";
+import { ApiError, getJob, jobEventsUrl } from "../config/api";
+
+// A vanished job (server restarted mid-run → in-memory registry wiped) surfaces
+// as a 404. Treat that as terminal so the client shows a clear error instead of
+// polling a nonexistent job forever.
+const GONE_MESSAGE =
+  "This job is no longer available — the server may have restarted. Please upload the file again.";
 
 // The stages we surface in the stepper (fuse folded into diarize→done flow).
 const STEP_STAGES: Stage[] = ["enhance", "transcribe", "align", "diarize", "done"];
@@ -81,7 +87,14 @@ export default function ProgressScreen({
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load result.");
+          setError(
+            e instanceof ApiError && e.status === 404
+              ? GONE_MESSAGE
+              : e instanceof Error
+                ? e.message
+                : "Failed to load result.",
+          );
+          setStage("error");
         }
       }
     }
@@ -109,8 +122,15 @@ export default function ProgressScreen({
             finishedRef.current = true;
             onDoneRef.current(job.result);
           }
-        } catch {
-          /* transient; try again next tick */
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 404) {
+            // Job gone (server restarted) — terminal, don't keep polling.
+            if (pollTimer) clearInterval(pollTimer);
+            setError(GONE_MESSAGE);
+            setStage("error");
+            return;
+          }
+          /* transient network blip; try again next tick */
         }
       };
       void poll();

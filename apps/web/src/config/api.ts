@@ -2,13 +2,28 @@
 
 import type {
   CreateJobResponse,
+  CreateNoteBody,
+  CreateNoteResponse,
   DownloadFormat,
   HealthResponse,
   Job,
   JobOptions,
+  Note,
+  NoteTemplatesResponse,
 } from "../types";
 
 export const API = "http://127.0.0.1:8000";
+
+/** Error carrying the HTTP status so callers can distinguish a terminal 404
+ * (e.g. a job that vanished when the server restarted) from a transient blip. */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -22,8 +37,9 @@ async function asJson<T>(res: Response): Promise<T> {
     } catch {
       detail = await res.text().catch(() => "");
     }
-    throw new Error(
+    throw new ApiError(
       `Request failed (${res.status} ${res.statusText})${detail ? `: ${detail}` : ""}`,
+      res.status,
     );
   }
   return (await res.json()) as T;
@@ -74,4 +90,41 @@ export function jobEventsUrl(id: string): string {
 /** URL for a downloadable transcript in the given format. */
 export function downloadUrl(id: string, fmt: DownloadFormat): string {
   return `${API}/jobs/${encodeURIComponent(id)}/download/${fmt}`;
+}
+
+// ---------------------------------------------------------------------------
+// Clinical note generation
+// ---------------------------------------------------------------------------
+
+/** List the available note templates + which provider the server will use. */
+export async function getNoteTemplates(
+  signal?: AbortSignal,
+): Promise<NoteTemplatesResponse> {
+  const res = await fetch(`${API}/notes/templates`, { signal });
+  return asJson<NoteTemplatesResponse>(res);
+}
+
+/** Kick off a note-generation job from a transcript. */
+export async function createNote(
+  body: CreateNoteBody,
+  signal?: AbortSignal,
+): Promise<CreateNoteResponse> {
+  const res = await fetch(`${API}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  return asJson<CreateNoteResponse>(res);
+}
+
+/** Fetch the current status + result of a note-generation job. */
+export async function getNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}`, { signal });
+  return asJson<Note>(res);
+}
+
+/** URL for the Server-Sent Events token stream of a note job. */
+export function noteEventsUrl(id: string): string {
+  return `${API}/notes/${encodeURIComponent(id)}/events`;
 }

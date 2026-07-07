@@ -146,6 +146,36 @@ below means the API backend (`apps/api`) and its web client (`apps/web`).
   public interface) so audio and results never leave the machine, and SHALL keep
   per-job scratch files inside the project (`apps/api/jobs/`). *(→ ADR-0003, ADR-0008)*
 
+## Clinical note generation
+
+An optional step *after* transcription: turn a transcript into a structured
+clinical note via a **pluggable AI provider** — a local LLM (Ollama) by default,
+a cloud model (Claude) as an explicit opt-in. The note-generation logic lives in
+`note_core` (parallels `stt_core`) and is driven by the same API/web surface.
+*(→ ADR-0009, ADR-0003, ADR-0008)*
+
+- **REQ-100** (Event) — WHEN the user requests a note for a completed transcript
+  with a chosen template (`soap`, `hp`, or a pasted `free` sample format), THE
+  SYSTEM SHALL generate a structured clinical note via the configured provider.
+  *(→ ADR-0009)*
+- **REQ-101** (Ubiquitous) — THE SYSTEM SHALL default to the local Ollama
+  provider and SHALL NOT send the transcript off-device unless the operator
+  explicitly selects a cloud provider via server env (`STT_NOTE_PROVIDER=claude`).
+  *(→ ADR-0009, ADR-0003)*
+- **REQ-102** (Unwanted) — IF a cloud provider is requested but its env flag is
+  not set to that provider or its token is unset, THEN THE SYSTEM SHALL refuse
+  with a user-safe explanation and SHALL NOT send any transcript data off-device.
+  *(→ ADR-0009)*
+- **REQ-103** (State) — WHILE a note is generating, THE SYSTEM SHALL stream it to
+  the client over SSE as token deltas (`GET /notes/{id}/events`), AND SHALL expose
+  the same status/result via a poll endpoint (`GET /notes/{id}`) as a fallback.
+  *(→ ADR-0008)*
+- **REQ-104** (Ubiquitous) — THE SYSTEM SHALL present the note as a review draft
+  (not a finalized record) and SHALL preserve the prompt's "Clinician Review
+  Needed" section. *(→ ADR-0009)*
+- **REQ-105** (Ubiquitous) — THE SYSTEM SHALL keep Ollama model downloads inside
+  the project (`OLLAMA_MODELS`), preserving one-command cleanup. *(→ ADR-0003)*
+
 ---
 
 ## Verification gate
@@ -163,3 +193,10 @@ transcribe samples/conversation.wav        # the stt-cli console script (was: py
 **≥ 2 distinct `Speaker N`** turns with plausible text (REQ-060). This exercises
 REQ-001/010/011/040/060/070/071 end-to-end. The web path (REQ-090–097) passes the
 same gate by uploading the sample and confirming `result.num_speakers ≥ 2`.
+
+**Note generation (REQ-100–105)** passes when, with `ollama serve` running
+(models under `OLLAMA_MODELS`), generating a note from that transcript on the
+default local provider produces all five sections (A–E) including a populated
+"Clinician Review Needed" (REQ-104), an ambiguous term is flagged rather than
+silently "corrected", and the cloud path stays refused unless
+`STT_NOTE_PROVIDER=claude` is set with a token (REQ-101/REQ-102).

@@ -38,6 +38,36 @@ emit(): print + write out/<stem>.txt (same pass) ; then out/<stem>.srt, out/<ste
 
 Key shapes are documented in [`structure.md`](structure.md#key-in-memory-shapes).
 
+## Clinical note generation (data flow)
+
+An optional step *after* transcription, owned by `note_core` (parallels
+`stt_core`). It **mirrors the transcription job pattern exactly**: a pure core
+function streams structured events through a callback; the API runs it on the
+same `ThreadPoolExecutor(1)` + in-memory registry and re-emits events over SSE;
+the poll endpoint is the fallback. → [`adr/0009`](adr/0009-clinical-note-pluggable-provider.md)
+
+```
+transcript text (from a completed job) + chosen template (soap | hp | free-paste)
+   │  note_core.generate(transcript, NoteOptions(provider, model, template, …), progress)
+   │     system = clinical-documentation prompt ; user = template + transcript
+   ▼
+provider (pluggable):
+   ├─ OllamaProvider (DEFAULT, local)  → POST http://localhost:11434/api/chat  {stream:true, num_ctx:16384}
+   └─ ClaudeProvider (OPT-IN cloud)    → Anthropic SDK messages.stream(claude-opus-4-8)
+        (gated: raises ProviderError unless STT_NOTE_PROVIDER=claude; no data sent when refused)
+   ▼
+streamed token deltas → NoteEvent(stage="generating", delta="…") callback
+   │  API: worker thread → loop.call_soon_threadsafe → per-note asyncio.Queue → SSE (GET /notes/{id}/events)
+   ▼
+UI renders the note live (sections A–E), highlights "Clinician Review Needed",
+copy / download .md ; NoteResult{note, provider, model, stopped_early, usage} also
+available via GET /notes/{id} (poll fallback)
+```
+
+Providers differ only in transport; the system/user prompt split is identical.
+The note is a **review draft**, never a finalized record — the UI keeps that
+framing and shows a cloud warning banner whenever the cloud provider is enabled.
+
 ## Design decisions (why it's built this way)
 
 Each deliberate choice has an ADR — read it before changing that area:
@@ -47,6 +77,7 @@ Each deliberate choice has an ADR — read it before changing that area:
 - **Self-contained caches** — one-command cleanup. → [`adr/0003`](adr/0003-self-contained-caches.md) · satisfies REQ-080
 - **Enhance + sensitive VAD by default** — recover quiet speakers, no flags. → [`adr/0004`](adr/0004-enhance-and-sensitive-vad-by-default.md) · satisfies REQ-030
 - **Diarizer component fallback** — work without the gated meta-model. → [`adr/0005`](adr/0005-diarizer-component-fallback.md) · satisfies REQ-061
+- **Clinical note pluggable provider** — local Ollama default (PHI on-device), cloud opt-in. → [`adr/0009`](adr/0009-clinical-note-pluggable-provider.md) · satisfies REQ-100–105
 
 ## Error-handling & fallback strategy
 

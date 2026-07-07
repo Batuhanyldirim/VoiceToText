@@ -5,7 +5,7 @@ goes. Read alongside [`design.md`](design.md).*
 
 ## Monorepo map
 
-A **uv workspace** ties three Python packages together with one `uv.lock` and
+A **uv workspace** ties four Python packages together with one `uv.lock` and
 editable interdependencies. The web app is a **separate npm project** (not in the
 workspace). → [`adr/0006-monorepo-uv-workspace.md`](adr/0006-monorepo-uv-workspace.md)
 
@@ -13,7 +13,7 @@ workspace). → [`adr/0006-monorepo-uv-workspace.md`](adr/0006-monorepo-uv-works
 stt-diarization-prototype/
 ├── pyproject.toml       # uv workspace root: members = packages/*, apps/cli, apps/api
 ├── uv.lock              # ONE lockfile for all Python packages
-├── env.sh               # source this first: venv + HF_TOKEN + cache redirection
+├── env.sh               # source this first: venv + HF_TOKEN + cache redirection + Ollama/note-provider env
 ├── make_sample.sh       # generates samples/conversation.wav (2-speaker fixture)
 ├── cleanup.sh           # reports footprint + how to fully remove the project
 ├── requirements.txt     # legacy pin list (authoritative pins now in packages/core)
@@ -22,17 +22,27 @@ stt-diarization-prototype/
 ├── specs/               # this spec suite (product/tech/structure/requirements/design/adr/tasks)
 │
 ├── packages/
-│   └── core/            # stt-core: the shared pipeline library (HOLDS THE VERSION PINS)
-│       ├── pyproject.toml           # load-bearing pins (ADR-0002)
-│       └── src/stt_core/
-│           ├── __init__.py          # public API: transcribe, TranscribeOptions, TranscribeResult, …
-│           ├── pipeline.py          # transcribe(): enhance→ASR→align→diarize→fuse orchestration
-│           ├── audio.py             # enhance_audio(): ffmpeg leveling chain
-│           ├── diarize.py           # load_diarizer() + component-pipeline fallback + diarize_dataframe()
-│           ├── fuse.py              # assign_speakers_segment_level(), build_turns(), speaker_name()
-│           ├── emit.py              # write_txt/srt/json + transcript_lines/fmt_ts (pure formatting, no stdout)
-│           ├── progress.py          # ProgressEvent, STAGES, capture_transcribe_progress()
-│           └── models.py            # TranscribeOptions, Turn, TranscribeResult dataclasses
+│   ├── core/            # stt-core: the shared pipeline library (HOLDS THE VERSION PINS)
+│   │   ├── pyproject.toml           # load-bearing pins (ADR-0002)
+│   │   └── src/stt_core/
+│   │       ├── __init__.py          # public API: transcribe, TranscribeOptions, TranscribeResult, …
+│   │       ├── pipeline.py          # transcribe(): enhance→ASR→align→diarize→fuse orchestration
+│   │       ├── audio.py             # enhance_audio(): ffmpeg leveling chain
+│   │       ├── diarize.py           # load_diarizer() + component-pipeline fallback + diarize_dataframe()
+│   │       ├── fuse.py              # assign_speakers_segment_level(), build_turns(), speaker_name()
+│   │       ├── emit.py              # write_txt/srt/json + transcript_lines/fmt_ts (pure formatting, no stdout)
+│   │       ├── progress.py          # ProgressEvent, STAGES, capture_transcribe_progress()
+│   │       └── models.py            # TranscribeOptions, Turn, TranscribeResult dataclasses
+│   └── note-core/       # note-core: pure clinical-note generation (parallels stt_core) (ADR-0009)
+│       ├── pyproject.toml           # optional [claude] extra pulls the Anthropic SDK
+│       └── src/note_core/
+│           ├── __init__.py          # public API: generate, NoteOptions, NoteResult, NoteEvent, STAGES, TEMPLATE_CHOICES, ProviderError, EmptyTranscriptError
+│           ├── generate.py          # generate(transcript, opts, progress): build prompt → provider → stream deltas
+│           ├── providers.py         # provider protocol + OllamaProvider (default, local) + ClaudeProvider (opt-in); cloud gating
+│           ├── prompt.py            # the clinical-documentation system prompt (verbatim)
+│           ├── templates.py         # TEMPLATE_CHOICES (soap, hp) + the free-paste option
+│           ├── progress.py          # NoteEvent, STAGES (start/generating/done/error), NoteCallback
+│           └── models.py            # NoteOptions, NoteResult dataclasses
 │
 ├── apps/
 │   ├── cli/             # stt-cli: thin CLI wrapper (same flags/output as the old transcribe.py)
@@ -47,7 +57,7 @@ stt-diarization-prototype/
 │
 ├── samples/             # test audio (conversation.wav + any you add) — git-ignored
 ├── out/                 # CLI transcripts (<name>.txt/.srt/.json) + <name>.enhanced.wav — git-ignored
-├── models/              # ALL downloaded models/caches — git-ignored, removable
+├── models/              # ALL downloaded models/caches (incl. models/ollama) — git-ignored, removable
 ├── .pip-cache/          # pip download cache — git-ignored
 ├── .venv/               # shared Python 3.11 virtual environment — git-ignored
 └── .hf_token            # untracked Hugging Face token (loaded by env.sh)
@@ -80,6 +90,38 @@ writes it (REQ-071).
 | **API** (`apps/api`) | `stt_api.main:app` (uvicorn) | `jobs.JobManager` runs `transcribe(...)` on a `ThreadPoolExecutor(1)`; `emit.*` writes into the job dir | `ProgressEvent` callback → `asyncio.Queue` → SSE (`GET /jobs/{id}/events`) |
 | **Web** (`apps/web`) | Vite/React app | calls the API over HTTP (upload → SSE/poll → download) | rendered from SSE stream |
 
+## Clinical note generation (`note_core` + note endpoints/screens)
+
+An optional step *after* transcription, owned by `packages/note-core` and driven
+by the same API/web surface. `note_core.generate()` is **pure** (no printing, no
+file writes); it streams token deltas through a `NoteEvent` callback. → ADR-0009.
+
+| Module / surface | Owns |
+|---|---|
+| `note_core/generate.py` | `generate(transcript, opts, progress) -> NoteResult`; builds system+user prompt, selects the provider, streams deltas |
+| `note_core/providers.py` | provider protocol; `OllamaProvider` (default, local `POST /api/chat`) + `ClaudeProvider` (opt-in cloud); enforces the `STT_NOTE_PROVIDER=claude` gate |
+| `note_core/prompt.py` | the clinical-documentation system prompt (stored verbatim; preserves negations + uncertainty flagging + sections A–E) |
+| `note_core/templates.py` | `TEMPLATE_CHOICES` — `soap`, `hp`, plus the `free` paste option |
+| `note_core/models.py` | `NoteOptions` (provider, model, template, template_text, temperature, num_ctx, max_tokens), `NoteResult` |
+| `note_core/progress.py` | `NoteEvent` (stage ∈ start/generating/done/error, `delta`, `message`), `NoteCallback`, `STAGES` |
+
+Note endpoints (API, reuse the `ThreadPoolExecutor(1)` + registry + SSE pattern):
+
+| Method + path | Purpose |
+|---|---|
+| `GET /notes/templates` | the available templates (`TEMPLATE_CHOICES` + the free option) |
+| `POST /notes` | transcript + `NoteOptions` → `{note_id}`; runs generation on the worker |
+| `GET /notes/{id}` | status poll + final `NoteResult` (poll fallback) |
+| `GET /notes/{id}/events` | **SSE** stream of token deltas (`stage`, `delta`) |
+
+Note screens (web, added *after* the transcript viewer):
+
+| Screen | What it does | API used |
+|---|---|---|
+| **Template picker** | choose SOAP / H&P / paste a free-text sample format | `GET /notes/templates` |
+| **NoteGenerator** | submit transcript + template → start generation | `POST /notes` |
+| **NoteViewer** | live-streamed note (sections A–E), highlights "Clinician Review Needed", copy + download `.md`; cloud warning banner when the cloud provider is enabled | `GET /notes/{id}/events` (SSE) · `GET /notes/{id}` |
+
 ## Where a change typically goes
 
 - **Pipeline behavior** (any stage, defaults, new fusion logic) → `stt_core`
@@ -93,6 +135,11 @@ writes it (REQ-071).
 - **Speaker label wording** → `SPEAKER_LABEL` constant + `speaker_name()` in `fuse.py`.
 - **New / changed API endpoint** → `stt_api/main.py`; job lifecycle → `stt_api/jobs.py`.
 - **New progress stage** → `progress.STAGES` + emit a `ProgressEvent` from `pipeline.py`.
+- **Note-generation behavior** (prompt, templates, providers) → `note_core`
+  (`prompt.py` / `templates.py` / `providers.py`). Both the API note endpoints
+  and the web note screens pick it up.
+- **New note provider** → add an implementation in `note_core/providers.py`
+  behind the provider protocol; keep the cloud gate + secret-from-server-env rule.
 
 ## Key in-memory shapes
 

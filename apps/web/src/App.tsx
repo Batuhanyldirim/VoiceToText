@@ -15,11 +15,33 @@ import { createJob } from "./config/api";
 import UploadScreen from "./components/UploadScreen";
 import ProgressScreen from "./components/ProgressScreen";
 import TranscriptViewer from "./components/TranscriptViewer";
+import NoteGenerator from "./components/NoteGenerator";
+import NoteViewer from "./components/NoteViewer";
 
 type View =
   | { screen: "upload" }
   | { screen: "progress"; jobId: string }
-  | { screen: "result"; jobId: string; result: JobResult };
+  | { screen: "result"; jobId: string; result: JobResult }
+  | {
+      screen: "note-setup";
+      jobId: string;
+      result: JobResult;
+      transcript: string;
+    }
+  | {
+      screen: "note-stream";
+      jobId: string;
+      result: JobResult;
+      transcript: string;
+      noteId: string;
+    };
+
+/** Flatten a transcript result into "Speaker: text" lines for note generation. */
+function transcriptToText(result: JobResult): string {
+  return (result.turns ?? [])
+    .map((t) => `${t.speaker}: ${t.text}`)
+    .join("\n");
+}
 
 export default function App() {
   const [view, setView] = useState<View>({ screen: "upload" });
@@ -60,6 +82,57 @@ export default function App() {
     setFile(null);
     setSubmitError(null);
     setView({ screen: "upload" });
+  }, []);
+
+  // Transcript result → clinical note setup.
+  const handleGenerateNote = useCallback(() => {
+    setView((v) =>
+      v.screen === "result"
+        ? {
+            screen: "note-setup",
+            jobId: v.jobId,
+            result: v.result,
+            transcript: transcriptToText(v.result),
+          }
+        : v,
+    );
+  }, []);
+
+  // Note setup → live token stream.
+  const handleNoteStarted = useCallback((noteId: string) => {
+    setView((v) =>
+      v.screen === "note-setup"
+        ? {
+            screen: "note-stream",
+            jobId: v.jobId,
+            result: v.result,
+            transcript: v.transcript,
+            noteId,
+          }
+        : v,
+    );
+  }, []);
+
+  // Back from note flow → the transcript result screen.
+  const handleBackToTranscript = useCallback(() => {
+    setView((v) =>
+      v.screen === "note-setup" || v.screen === "note-stream"
+        ? { screen: "result", jobId: v.jobId, result: v.result }
+        : v,
+    );
+  }, []);
+
+  const handleBackToNoteSetup = useCallback(() => {
+    setView((v) =>
+      v.screen === "note-stream"
+        ? {
+            screen: "note-setup",
+            jobId: v.jobId,
+            result: v.result,
+            transcript: v.transcript,
+          }
+        : v,
+    );
   }, []);
 
   return (
@@ -127,6 +200,21 @@ export default function App() {
               jobId={view.jobId}
               result={view.result}
               file={file}
+              onReset={handleReset}
+              onGenerateNote={handleGenerateNote}
+            />
+          )}
+          {view.screen === "note-setup" && (
+            <NoteGenerator
+              transcript={view.transcript}
+              onGenerating={handleNoteStarted}
+              onBack={handleBackToTranscript}
+            />
+          )}
+          {view.screen === "note-stream" && (
+            <NoteViewer
+              noteId={view.noteId}
+              onBack={handleBackToNoteSetup}
               onReset={handleReset}
             />
           )}

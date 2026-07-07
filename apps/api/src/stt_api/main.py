@@ -18,12 +18,16 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from note_core import NoteOptions, TEMPLATE_CHOICES
+from note_core.progress import NoteEvent
 from stt_core import TranscribeOptions
 from stt_core.progress import ProgressEvent
 
 from .jobs import JobManager
+from .notes import NoteJobManager
 
 # Per-job scratch lives inside the project (git-ignored) — keeps the
 # "self-contained, rm -rf to clean" promise (ADR-0003).
@@ -40,6 +44,7 @@ app.add_middleware(
 )
 
 manager = JobManager(JOBS_ROOT)
+note_manager = NoteJobManager()
 
 # Generous cap (overridable via STT_MAX_UPLOAD_GB). The upload is streamed to
 # disk in chunks (not buffered in RAM), so large files are safe memory-wise;
@@ -171,6 +176,117 @@ def download(job_id: str, fmt: str):
     stem = Path(getattr(job, "original_name", "transcript")).stem or "transcript"
     media = {"txt": "text/plain", "srt": "application/x-subrip", "json": "application/json"}[fmt]
     return FileResponse(path, media_type=media, filename=f"{stem}.{fmt}")
+
+
+# ---------------------------------------------------------------------------
+# Clinical note generation (note_core) — mirrors the transcription job pattern.
+# The provider is chosen by the OPERATOR via server env (STT_NOTE_PROVIDER),
+# never by the browser (ADR-0009). No cloud token is ever accepted or logged.
+# ---------------------------------------------------------------------------
+
+
+def _note_provider() -> str:
+    return os.environ.get("STT_NOTE_PROVIDER", "ollama").strip().lower()
+
+
+class NoteRequest(BaseModel):
+    transcript: str
+    template: str = "soap"
+    template_text: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@app.get("/notes/templates")
+def note_templates() -> dict:
+    """List note formats + the operator's provider config so the UI can show the
+    right picker and PHI warning. Includes a "free" paste option alongside the
+    built-in templates."""
+    provider = _note_provider()
+    templates = list(TEMPLATE_CHOICES) + [{
+        "key": "free",
+        "label": "Paste my own format",
+        "description": "Paste a sample note in your own layout; the note will follow it.",
+    }]
+    return {
+        "templates": templates,
+        "provider": provider,
+        "cloud_enabled": provider == "claude",
+    }
+
+
+@app.post("/notes", status_code=202)
+async def create_note(body: NoteRequest) -> dict:
+    # MUST be async: submit() binds the job to the running event loop via
+    # asyncio.get_running_loop() (so the worker thread can push SSE events back
+    # onto it). A sync handler runs off the loop thread and would raise
+    # "no running event loop" — matching the transcription create_job endpoint.
+    if not body.transcript or not body.transcript.strip():
+        raise HTTPException(400, "transcript is empty — nothing to summarize.")
+
+    # If the browser omits provider, use the server default. We never let the
+    # browser force cloud: note_core.get_provider gates "claude" behind the
+    # server env, so a claude request without opt-in errors cleanly via
+    # ProviderError inside the job (surfaced as status=error).
+    opts = NoteOptions(
+        provider=(body.provider or _note_provider()),
+        model=body.model or None,
+        template=body.template,
+        template_text=body.template_text,
+    )
+    job = note_manager.register(body.transcript, opts)
+    note_manager.submit(job)
+    return {"note_id": job.id, "status": job.status}
+
+
+@app.get("/notes/{note_id}")
+def get_note(note_id: str) -> dict:
+    job = note_manager.get(note_id)
+    if not job:
+        raise HTTPException(404, "note not found")
+    return {
+        "note_id": job.id,
+        "status": job.status,
+        "provider": job.opts.provider,
+        "model": job.opts.resolved_model(),
+        "template": job.opts.template,
+        "note": job.note_text,       # accumulated text so far
+        "result": job.result,
+        "error": job.error,
+    }
+
+
+@app.get("/notes/{note_id}/events")
+async def note_events(note_id: str):
+    job = note_manager.get(note_id)
+    if not job:
+        raise HTTPException(404, "note not found")
+
+    async def stream():
+        # If generation already finished before the client connected, emit a final event.
+        if job.status in ("done", "error"):
+            payload = {"stage": job.stage}
+            if job.error:
+                payload["message"] = job.error
+            yield {"event": job.status, "data": json.dumps(payload)}
+            return
+        assert job.queue is not None
+        while True:
+            try:
+                event: NoteEvent = await asyncio.wait_for(job.queue.get(), timeout=30)
+            except asyncio.TimeoutError:
+                yield {"event": "ping", "data": "keepalive"}
+                continue
+            payload = {"stage": event.stage}
+            if event.delta:
+                payload["delta"] = event.delta
+            if event.message:
+                payload["message"] = event.message
+            yield {"event": event.stage, "data": json.dumps(payload)}
+            if event.stage in ("done", "error"):
+                break
+
+    return EventSourceResponse(stream())
 
 
 def run() -> None:

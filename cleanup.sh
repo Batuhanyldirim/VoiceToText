@@ -15,6 +15,9 @@ echo "    $PROJECT_ROOT"
 echo
 echo "=== Size of downloads living inside the project: ==="
 du -sh "$PROJECT_ROOT/models" "$PROJECT_ROOT/.pip-cache" "$PROJECT_ROOT/.venv" 2>/dev/null || true
+# models/ollama holds the local note-generation LLM (redirected here by env.sh
+# via OLLAMA_MODELS, ADR-0003). Reported separately so its footprint is visible.
+du -sh "$PROJECT_ROOT/models/ollama" 2>/dev/null || true
 echo
 echo "To remove the ENTIRE prototype (venv + all models + all caches), run:"
 echo "    rm -rf \"$PROJECT_ROOT\""

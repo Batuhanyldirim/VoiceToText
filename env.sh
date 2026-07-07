@@ -21,6 +21,23 @@ export PIP_CACHE_DIR="$PROJECT_ROOT/.pip-cache"
 # MPLCONFIGDIR / numba caches sometimes used by audio libs
 export MPLCONFIGDIR="$PROJECT_ROOT/models/mpl"
 export NUMBA_CACHE_DIR="$PROJECT_ROOT/models/numba"
+# Ollama (local LLM for clinical note generation) stores models in ~/.ollama by
+# default, which would leak outside the project. Redirect it INTO the project so
+# `rm -rf` still removes everything (ADR-0003). Start `ollama serve` in a shell
+# that has sourced this file so the server honors OLLAMA_MODELS.
+export OLLAMA_MODELS="$PROJECT_ROOT/models/ollama"
+export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
+
+# --- Clinical note generation (packages/note-core) ---
+# Provider is LOCAL by default so transcripts (PHI) never leave the machine
+# (ADR-0009). "claude" is a cloud opt-in the operator sets deliberately; the API
+# refuses the cloud path unless this is exactly "claude" AND a token is set.
+export STT_NOTE_PROVIDER="${STT_NOTE_PROVIDER:-ollama}"
+export STT_NOTE_MODEL="${STT_NOTE_MODEL:-qwen2.5:32b-instruct}"
+# Cloud opt-in (only used when STT_NOTE_PROVIDER=claude). Never logged/returned.
+#   export STT_NOTE_PROVIDER=claude
+#   export STT_CLAUDE_API_KEY=sk-ant-...   # or ANTHROPIC_API_KEY
+#   export STT_CLAUDE_MODEL=claude-opus-4-8
 
 # --- Your Hugging Face token (needed for pyannote diarization) ---
 # Provide it EITHER way (both are git-ignored / never committed):
@@ -40,3 +57,4 @@ echo "[env] Project root: $PROJECT_ROOT"
 echo "[env] HF_HOME=$HF_HOME"
 echo "[env] HF_TOKEN set: $([ -n "$HF_TOKEN" ] && echo yes || echo NO)"
 echo "[env] venv active: ${VIRTUAL_ENV:-none}"
+echo "[env] Note provider: $STT_NOTE_PROVIDER (model: $STT_NOTE_MODEL); OLLAMA_MODELS=$OLLAMA_MODELS"

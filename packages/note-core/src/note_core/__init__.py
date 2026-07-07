@@ -1,0 +1,28 @@
+"""note_core — clinical note generation from a transcript via a pluggable AI.
+
+Local Ollama is the default (PHI stays on-device); Claude is an opt-in cloud
+provider behind an explicit server env flag. Parallels stt_core: a pure
+`generate(...)` function, structured streaming events, no printing/file writes.
+
+    from note_core import generate, NoteOptions, NoteResult
+    from note_core.progress import NoteEvent, STAGES
+    from note_core.templates import TEMPLATE_CHOICES
+
+See specs/ (ADR-0009, REQ-100+) for the contract and the PHI rationale.
+"""
+from .generate import EmptyTranscriptError, generate
+from .models import NoteOptions, NoteResult
+from .progress import STAGES, NoteEvent
+from .providers import ProviderError
+from .templates import TEMPLATE_CHOICES
+
+__all__ = [
+    "generate",
+    "NoteOptions",
+    "NoteResult",
+    "NoteEvent",
+    "STAGES",
+    "TEMPLATE_CHOICES",
+    "ProviderError",
+    "EmptyTranscriptError",
+]

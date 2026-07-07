@@ -1,8 +1,11 @@
 # Task: Clinical note generation (transcript → structured note via pluggable AI)
 
-**Status:** APPROVED, not yet started. This file is a cross-chat handoff — it
-carries the full plan and the operational knowledge a fresh agent needs to build
-this without the originating conversation. Read `AGENTS.md` first, then this.
+**Status:** IMPLEMENTED. `packages/note-core` ships the pure `generate(...)` with
+the Ollama (default) and Claude (opt-in) providers; the API exposes the note
+endpoints and the web app the note screens; docs (ADR-0009, REQ-100–105,
+AGENTS/tech/structure/product + per-app READMEs) are updated. This file is
+retained as the design record + operational knowledge. Read `AGENTS.md` first,
+then this.
 
 ## Goal
 
@@ -45,6 +48,10 @@ Stream tokens back → render live. Providers differ only in transport:
   structured extraction) or **`llama3.1:8b-instruct`** (lighter/faster). Pick one,
   pull it, verify note quality on a sample transcript. ~5–9 GB download.
 - CPU/Metal inference — expect tens of seconds per note; that's fine.
+
+> **Shipped:** the default is **`qwen2.5:32b-instruct`** (~20 GB, Q4) — the
+> strongest model that fits 48 GB unified memory with a large `num_ctx` (a 72B
+> exceeds Metal's alloc ceiling). `num_ctx` defaults to 16384. See `tech.md`.
 
 ## Cleanup promise (ADR-0003) — DO NOT BREAK
 
@@ -170,9 +177,9 @@ than silently "corrected". Cloud path stays refused unless the env flag is set.
 
 ## Constraints to respect (don't violate)
 
-- [ ] Local (Ollama) is the DEFAULT; cloud is opt-in only, with a UI warning (ADR-0009)
-- [ ] Ollama models redirected into the project via `OLLAMA_MODELS` (ADR-0003)
-- [ ] note-core is pure; API stays thin; import-not-subprocess; lazy heavy imports
-- [ ] Stream the note over SSE, same pattern as transcription (ADR-0008)
-- [ ] Never send PHI off-device on the default path; never log/return a cloud token
-- [ ] Store the clinical prompt verbatim; preserve negations + uncertainty flagging
+- [x] Local (Ollama) is the DEFAULT; cloud is opt-in only, with a UI warning (ADR-0009)
+- [x] Ollama models redirected into the project via `OLLAMA_MODELS` (ADR-0003)
+- [x] note-core is pure; API stays thin; import-not-subprocess; lazy heavy imports
+- [x] Stream the note over SSE, same pattern as transcription (ADR-0008)
+- [x] Never send PHI off-device on the default path; never log/return a cloud token
+- [x] Store the clinical prompt verbatim; preserve negations + uncertainty flagging
