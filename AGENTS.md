@@ -14,18 +14,37 @@ flags required.** Full context in [`specs/product.md`](specs/product.md).
 ## Golden rule (the #1 gotcha)
 
 **Always `source env.sh` before running or testing anything.** It (a) activates
-the Python 3.11 venv, (b) exports `HF_TOKEN` from `.hf_token`, and (c) redirects
-every model/cache download *into this project folder*. Nothing works correctly
-without it, and skipping (c) leaks gigabytes into `~/.cache`.
+the Python 3.11 venv, (b) exports `HF_TOKEN` (from an already-set env var, else
+from a `.hf_token` file — see Setup step 3), and (c) redirects every model/cache
+download *into this project folder*. Nothing works correctly without it, and
+skipping (c) leaks gigabytes into `~/.cache`.
 
-## Setup (from scratch)
+## Setup (from a fresh clone)
+
+The repo is code-only — `.venv/`, `models/`, `samples/`, `out/`, and `.hf_token`
+are git-ignored, so a clone has none of them yet. Full setup:
 
 ```bash
+# 1. System deps (macOS / Apple Silicon)
 brew install ffmpeg python@3.11
+
+# 2. Create the Python 3.11 venv
 /opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv
-source env.sh                       # activate venv + env before installing
+
+# 3. Provide a Hugging Face token (needed for diarization) — pick ONE:
+export HF_TOKEN=hf_your_token_here          # a) env var, OR
+cp .hf_token.example .hf_token && $EDITOR .hf_token   # b) token file
+#    First create a free token (type: Read) at huggingface.co/settings/tokens
+#    and accept model terms — details in .hf_token.example.
+
+# 4. Activate env + install deps (run source BEFORE pip so caches redirect)
+source env.sh
 pip install -r requirements.txt
 ```
+
+`source env.sh` prints whether `HF_TOKEN` is set and whether the venv is active —
+check those two lines say `yes` / a path before running. To transcribe *without*
+diarization you can skip step 3 and pass `--no-diarize` (no token needed).
 
 ## Run
 
