@@ -172,6 +172,15 @@ still pass this gate.
 | Run/extend the web UI | [`apps/web/README.md`](apps/web/README.md) |
 | Add a feature or refactor | copy [`specs/tasks/TEMPLATE.md`](specs/tasks/TEMPLATE.md) |
 
+## Planned / in-flight work
+
+- **Clinical note generation** (approved, not started) — turn a transcript into a
+  structured clinical note via a **pluggable AI provider** (local Ollama by
+  default, Claude opt-in; PHI stays local). Full plan + operational knowledge +
+  the clinical prompt are in
+  [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md).
+  **A new chat continuing this work should start by reading that file.**
+
 ## How to add a feature (the spec-driven loop)
 
 1. Read this file + the relevant `specs/`.
