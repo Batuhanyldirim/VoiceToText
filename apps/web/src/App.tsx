@@ -12,6 +12,7 @@ import { ThemeProvider } from "@mui/material/styles";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import theme from "./theme";
 import type { JobOptions, JobResult } from "./types";
 import { createJob } from "./config/api";
@@ -101,6 +102,12 @@ export default function App() {
   // App bar → saved-notes history.
   const handleOpenHistory = useCallback(() => {
     setView({ screen: "history" });
+  }, []);
+
+  // Start a brand-new note from the source picker (reuse an existing transcript
+  // or route to upload). Reachable from the app bar and the upload screen.
+  const handleNewNote = useCallback(() => {
+    setView({ screen: "note-source" });
   }, []);
 
   // Transcript result → clinical note setup.
@@ -214,6 +221,14 @@ export default function App() {
             </Button>
             <Button
               color="inherit"
+              startIcon={<DescriptionRoundedIcon />}
+              onClick={handleNewNote}
+              sx={{ color: "text.secondary", mr: 0.5 }}
+            >
+              Yeni not
+            </Button>
+            <Button
+              color="inherit"
               startIcon={<HistoryRoundedIcon />}
               onClick={handleOpenHistory}
               sx={{ color: "text.secondary" }}
@@ -229,6 +244,7 @@ export default function App() {
               onSubmit={handleSubmit}
               submitting={submitting}
               submitError={submitError}
+              onUseExisting={handleNewNote}
             />
           )}
           {view.screen === "progress" && (

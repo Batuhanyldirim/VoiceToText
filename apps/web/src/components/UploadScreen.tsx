@@ -22,6 +22,7 @@ import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import type { JobOptions, ModelName } from "../types";
 
 const ACCEPTED_EXTENSIONS = [
@@ -57,12 +58,16 @@ interface UploadScreenProps {
   onSubmit: (file: File, options: JobOptions) => void;
   submitting: boolean;
   submitError: string | null;
+  /** Optional: jump straight to generating a note from an already-transcribed
+   *  file in out/ (skips upload + transcription — handy for dev/testing). */
+  onUseExisting?: () => void;
 }
 
 export default function UploadScreen({
   onSubmit,
   submitting,
   submitError,
+  onUseExisting,
 }: UploadScreenProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -130,6 +135,21 @@ export default function UploadScreen({
           bırakın.
         </Typography>
       </Box>
+
+      {onUseExisting && (
+        <Alert
+          severity="info"
+          icon={<DescriptionRoundedIcon />}
+          action={
+            <Button color="inherit" size="small" onClick={onUseExisting}>
+              Mevcut deşifreyi kullan
+            </Button>
+          }
+        >
+          Zaten deşifre edilmiş bir dosyanız mı var? Yeniden yüklemeden doğrudan
+          not oluşturun.
+        </Alert>
+      )}
 
       <Card>
         <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
