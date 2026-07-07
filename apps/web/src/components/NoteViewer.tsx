@@ -31,6 +31,9 @@ interface NoteViewerProps {
   /** When false, open a SAVED note read-only: fetch getNote(id) once and render
    *  it as done, without opening an EventSource. Defaults to true (live job). */
   live?: boolean;
+  /** Fired once when a live note finishes generating (so the sidebar, which the
+   *  freshly-saved note now belongs in, can refresh). */
+  onSaved?: () => void;
 }
 
 // Split a note into the body and a trailing "Clinician Review Needed" region
@@ -69,6 +72,7 @@ export default function NoteViewer({
   onBack,
   onReset,
   live = true,
+  onSaved,
 }: NoteViewerProps) {
   const [note, setNote] = useState("");
   const [status, setStatus] = useState<NoteStage>("start");
@@ -78,6 +82,9 @@ export default function NoteViewer({
   const [copied, setCopied] = useState(false);
 
   const finishedRef = useRef(false);
+  // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
+  const onSavedRef = useRef(onSaved);
+  onSavedRef.current = onSaved;
 
   useEffect(() => {
     finishedRef.current = false;
@@ -92,6 +99,9 @@ export default function NoteViewer({
       const finalText = job.result?.note ?? job.note ?? "";
       if (finalText) setNote(finalText);
       setStatus("done");
+      // A freshly-generated (live) note has just been persisted — tell the app
+      // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
+      if (live) onSavedRef.current?.();
     }
 
     async function fetchResultAndFinish(attempt = 0) {
