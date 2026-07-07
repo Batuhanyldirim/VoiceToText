@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .audio import enhance_audio
-from .diarize import load_diarizer
+from .diarize import _mute_version_warnings, load_diarizer
 from .fuse import assign_speakers_segment_level, build_turns
 from .models import TranscribeOptions, TranscribeResult
 from .progress import ProgressCallback, ProgressEvent, capture_transcribe_progress, noop
@@ -61,10 +61,13 @@ def transcribe(
 
     # --- Stage 2: transcribe (with fine-grained % via stdout interception) ---
     log("Loading ASR model ...")
-    asr = whisperx.load_model(
-        opts.model, device, compute_type=opts.compute_type, language=opts.language,
-        vad_options={"vad_onset": opts.vad_onset},
-    )
+    # load_model pulls in the pyannote VAD, which prints benign version-mismatch
+    # spam via raw print(); mute it (same filter as the diarizer load).
+    with _mute_version_warnings():
+        asr = whisperx.load_model(
+            opts.model, device, compute_type=opts.compute_type, language=opts.language,
+            vad_options={"vad_onset": opts.vad_onset},
+        )
     progress(ProgressEvent(stage="transcribe", percent=0.0))
     with capture_transcribe_progress(progress):
         result = asr.transcribe(

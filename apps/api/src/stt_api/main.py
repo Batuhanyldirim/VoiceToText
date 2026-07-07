@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +30,24 @@ from stt_core.progress import ProgressEvent
 
 from .jobs import JobManager
 from .notes import NoteJobManager
+
+# --- Logging: surface our job/note lifecycle INFO lines, and quiet the known,
+# benign third-party warnings that otherwise fire on every job and bury the
+# useful output (torch.load weights_only, pyannote/torch version mismatches,
+# TRANSFORMERS_CACHE deprecation). Set STT_LOG_LEVEL=DEBUG to see everything;
+# STT_QUIET_DEPS=0 to keep the third-party noise.
+logging.basicConfig(
+    level=os.environ.get("STT_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+if os.environ.get("STT_QUIET_DEPS", "1") == "1":
+    warnings.filterwarnings("ignore", message=r".*weights_only=False.*")
+    warnings.filterwarnings("ignore", message=r".*TRANSFORMERS_CACHE.*")
+    warnings.filterwarnings("ignore", message=r".*was trained with.*")
+    for _noisy in ("pyannote", "pytorch_lightning", "lightning_fabric",
+                   "speechbrain", "torch.serialization"):
+        logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 # Per-job scratch lives inside the project (git-ignored) — keeps the
 # "self-contained, rm -rf to clean" promise (ADR-0003).

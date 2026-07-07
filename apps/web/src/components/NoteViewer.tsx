@@ -87,7 +87,7 @@ export default function NoteViewer({
       setStatus("done");
     }
 
-    async function fetchResultAndFinish() {
+    async function fetchResultAndFinish(attempt = 0) {
       if (finishedRef.current || cancelled) return;
       try {
         const job = await getNote(noteId);
@@ -97,10 +97,26 @@ export default function NoteViewer({
           setStatus("error");
           return;
         }
-        if (job.status === "done") finish(job);
+        if (job.status === "done") {
+          finish(job);
+          return;
+        }
+        // "done" event but result not published yet — retry, then poll-fallback
+        // (defense in depth against the terminal-event/result-write race).
+        if (attempt < 5) {
+          setTimeout(() => void fetchResultAndFinish(attempt + 1), 400);
+        } else {
+          startPolling();
+        }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load note.");
+          setError(
+            e instanceof ApiError && e.status === 404
+              ? GONE_MESSAGE
+              : e instanceof Error
+                ? e.message
+                : "Failed to load note.",
+          );
           setStatus("error");
         }
       }

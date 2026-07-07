@@ -71,7 +71,7 @@ export default function ProgressScreen({
     let abort: AbortController | null = null;
     let cancelled = false;
 
-    async function fetchResultAndFinish() {
+    async function fetchResultAndFinish(attempt = 0) {
       if (finishedRef.current || cancelled) return;
       try {
         const job = await getJob(jobId);
@@ -84,6 +84,15 @@ export default function ProgressScreen({
         if (job.status === "done" && job.result) {
           finishedRef.current = true;
           onDoneRef.current(job.result);
+          return;
+        }
+        // "done" event arrived but the result isn't published yet (or status
+        // still "running"). Instead of giving up (which froze the UI on large
+        // files), retry a few times, then fall back to polling.
+        if (attempt < 5) {
+          setTimeout(() => void fetchResultAndFinish(attempt + 1), 400);
+        } else {
+          startPolling();
         }
       } catch (e) {
         if (!cancelled) {
