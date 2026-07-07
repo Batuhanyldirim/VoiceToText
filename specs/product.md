@@ -14,13 +14,25 @@ A single technical user prototyping a speech-to-text product. Not a hosted
 service, not multi-tenant, no accounts. Privacy matters: audio never leaves the
 machine (all models run locally).
 
+## Two ways to use it
+
+Both surfaces share one pipeline library (`stt_core`) — same models, same
+results.
+
+1. **CLI** — for terminal users and scripting. `transcribe meeting.mp4`.
+2. **Web app** — for a **no-terminal-needed** experience: open the page,
+   **upload** a file, watch **live progress**, then read the **transcript
+   viewer** and download `.txt`/`.srt`/`.json`. Runs against a local API on
+   `127.0.0.1` — still fully offline, audio never leaves the machine.
+
 ## The product promise (the UX contract)
 
 **Point it at a file, get a transcript. No flags required.**
 
 ```bash
 source env.sh
-python transcribe.py meeting.mp4
+transcribe meeting.mp4            # CLI
+# — or — open the web app and drag the file in (no flags, no terminal)
 ```
 
 Everything that makes results good is a *default*, not something the user must
@@ -42,10 +54,14 @@ feature must not erode the no-flags default path.
 
 ## Secondary promises
 
+- **Privacy stays local** — even with the web app, the API binds `127.0.0.1`,
+  runs models locally, and reads `HF_TOKEN` only from server env (never from the
+  browser, never logged or returned).
 - **One-command cleanup** — everything downloaded lives inside the project
-  folder; `rm -rf` the folder removes 100% of it. See
+  folder; `rm -rf` the folder removes 100% of it (job scratch under
+  `apps/api/jobs/` is inside the project too). See
   [`adr/0003-self-contained-caches.md`](adr/0003-self-contained-caches.md).
-- **The `.txt` output mirrors the terminal exactly** and is written live.
+- **The CLI `.txt` output mirrors the terminal exactly** and is written live.
 
 ## Explicit non-goals (for now)
 
@@ -54,4 +70,6 @@ feature must not erode the no-flags default path.
   [`adr/0001-cpu-only.md`](adr/0001-cpu-only.md)).
 - No speaker *identification* (naming real people); speakers are anonymous
   `Speaker 1/2/…` per recording.
-- No web UI or API; it's a CLI.
+- **Not a hosted/multi-tenant service.** The web app is a single-user local
+  convenience (one machine, one worker), not a deployed multi-user backend — no
+  accounts, no auth, bound to localhost.

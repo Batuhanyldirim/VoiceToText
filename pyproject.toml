@@ -1,0 +1,18 @@
+# Root of the uv workspace. Ties the Python packages together with ONE lockfile
+# and editable interdependencies. The frontend (apps/web) is a separate npm
+# project and is NOT part of this workspace.
+[project]
+name = "voicetotext-workspace"
+version = "0.1.0"
+description = "Speech-to-text + speaker diarization: shared core, CLI, and web API"
+requires-python = ">=3.11,<3.12"
+
+[tool.uv.workspace]
+members = ["packages/*", "apps/cli", "apps/api"]
+
+[tool.uv.sources]
+stt-core = { workspace = true }
+
+# Convenience: `uv run transcribe ...` from the repo root resolves the CLI.
+[dependency-groups]
+dev = []

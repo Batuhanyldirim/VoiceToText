@@ -1,0 +1,27 @@
+[project]
+name = "stt-core"
+version = "0.1.0"
+description = "Shared speech-to-text + speaker diarization pipeline (WhisperX + pyannote)"
+requires-python = ">=3.11,<3.12"
+
+# LOAD-BEARING PINS (ADR-0002). WhisperX 3.4.2 only declares loose lower bounds,
+# so a naive install pulls bleeding-edge deps that break it. This coherent set is
+# hand-verified on macOS arm64 / Python 3.11. Do NOT bump casually.
+dependencies = [
+    "whisperx==3.4.2",
+    "torch==2.5.1",
+    "torchaudio==2.5.1",
+    "transformers==4.48.0",
+    "pyannote-audio==3.3.2",
+    "ctranslate2==4.4.0",
+    "omegaconf>=2.3.0",       # required by pyannote VAD loader
+    "matplotlib>=3.7.0",      # imported by pyannote-audio 3.3.2 tasks
+    "tqdm>=4.66.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stt_core"]

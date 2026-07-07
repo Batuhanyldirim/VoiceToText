@@ -1,0 +1,347 @@
+import { useCallback, useRef, useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  Collapse,
+  Divider,
+  FormControlLabel,
+  Grid,
+  IconButton,
+  MenuItem,
+  Stack,
+  Switch,
+  TextField,
+  Typography,
+} from "@mui/material";
+import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
+import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
+import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
+import type { JobOptions, ModelName } from "../types";
+
+const ACCEPTED_EXTENSIONS = [
+  ".wav",
+  ".mp3",
+  ".m4a",
+  ".flac",
+  ".mp4",
+  ".mov",
+  ".mkv",
+  ".webm",
+];
+const ACCEPT_ATTR = ACCEPTED_EXTENSIONS.join(",");
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  return `${value.toFixed(1)} ${units[i]}`;
+}
+
+function hasAcceptedExtension(name: string): boolean {
+  const lower = name.toLowerCase();
+  return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+interface UploadScreenProps {
+  onSubmit: (file: File, options: JobOptions) => void;
+  submitting: boolean;
+  submitError: string | null;
+}
+
+export default function UploadScreen({
+  onSubmit,
+  submitting,
+  submitError,
+}: UploadScreenProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  const [showOptions, setShowOptions] = useState(false);
+  const [language, setLanguage] = useState("");
+  const [diarize, setDiarize] = useState(true);
+  const [minSpeakers, setMinSpeakers] = useState("");
+  const [maxSpeakers, setMaxSpeakers] = useState("");
+  const [model, setModel] = useState<ModelName>("large-v3");
+
+  const acceptFile = useCallback((f: File) => {
+    if (!hasAcceptedExtension(f.name)) {
+      setFileError(
+        `Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}`,
+      );
+      return;
+    }
+    setFileError(null);
+    setFile(f);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragActive(false);
+      const f = e.dataTransfer.files?.[0];
+      if (f) acceptFile(f);
+    },
+    [acceptFile],
+  );
+
+  const handleFileInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      if (f) acceptFile(f);
+    },
+    [acceptFile],
+  );
+
+  const handleSubmit = () => {
+    if (!file) return;
+    const options: JobOptions = {
+      language: language.trim() || undefined,
+      diarize,
+      model,
+    };
+    const min = parseInt(minSpeakers, 10);
+    const max = parseInt(maxSpeakers, 10);
+    if (!Number.isNaN(min)) options.min_speakers = min;
+    if (!Number.isNaN(max)) options.max_speakers = max;
+    onSubmit(file, options);
+  };
+
+  return (
+    <Stack spacing={3}>
+      <Box sx={{ textAlign: "center" }}>
+        <Typography variant="h4" gutterBottom>
+          Transcribe speech with speaker labels
+        </Typography>
+        <Typography variant="body1" color="text.secondary">
+          Drop an audio or video file to get a clean, diarized transcript.
+        </Typography>
+      </Box>
+
+      <Card>
+        <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+          {/* Dropzone */}
+          <Box
+            role="button"
+            tabIndex={0}
+            onClick={() => inputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            sx={{
+              cursor: "pointer",
+              borderRadius: 3,
+              border: "2px dashed",
+              borderColor: dragActive ? "primary.main" : "rgba(26,26,46,0.18)",
+              bgcolor: dragActive ? "primary.light" : "background.default",
+              transition: "all 0.15s ease",
+              px: 3,
+              py: { xs: 5, sm: 7 },
+              textAlign: "center",
+              outline: "none",
+              "&:hover": {
+                borderColor: "primary.main",
+                bgcolor: "rgba(91,91,214,0.04)",
+              },
+            }}
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept={ACCEPT_ATTR}
+              hidden
+              onChange={handleFileInput}
+            />
+            <CloudUploadOutlinedIcon
+              sx={{ fontSize: 56, color: "primary.main", mb: 1 }}
+            />
+            <Typography variant="h6" gutterBottom>
+              {dragActive ? "Drop to upload" : "Drag & drop your file here"}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              or click to browse
+            </Typography>
+            <Stack
+              direction="row"
+              spacing={1}
+              useFlexGap
+              sx={{ mt: 2, justifyContent: "center", flexWrap: "wrap" }}
+            >
+              {ACCEPTED_EXTENSIONS.map((ext) => (
+                <Chip
+                  key={ext}
+                  label={ext.replace(".", "")}
+                  size="small"
+                  variant="outlined"
+                />
+              ))}
+            </Stack>
+          </Box>
+
+          {fileError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {fileError}
+            </Alert>
+          )}
+
+          {file && (
+            <Box
+              sx={{
+                mt: 2,
+                p: 1.5,
+                borderRadius: 2,
+                bgcolor: "background.default",
+                display: "flex",
+                alignItems: "center",
+                gap: 1.5,
+              }}
+            >
+              <InsertDriveFileOutlinedIcon color="primary" />
+              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                <Typography noWrap sx={{ fontWeight: 600 }}>
+                  {file.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {formatBytes(file.size)}
+                </Typography>
+              </Box>
+              <IconButton
+                size="small"
+                aria-label="Remove file"
+                onClick={() => {
+                  setFile(null);
+                  if (inputRef.current) inputRef.current.value = "";
+                }}
+              >
+                <CloseRoundedIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          )}
+
+          {/* Options */}
+          <Box sx={{ mt: 2 }}>
+            <Button
+              startIcon={<TuneRoundedIcon />}
+              onClick={() => setShowOptions((s) => !s)}
+              color="inherit"
+              sx={{ color: "text.secondary" }}
+            >
+              {showOptions ? "Hide options" : "Options"}
+            </Button>
+            <Collapse in={showOptions}>
+              <Box sx={{ pt: 2 }}>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="Language"
+                      placeholder="auto-detect"
+                      helperText="Leave blank to auto-detect (e.g. en, tr)"
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      select
+                      label="Model"
+                      value={model}
+                      onChange={(e) => setModel(e.target.value as ModelName)}
+                      fullWidth
+                      size="small"
+                      helperText="small is ~4x faster, less accurate"
+                    >
+                      <MenuItem value="large-v3">large-v3 (best)</MenuItem>
+                      <MenuItem value="small">small (faster)</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 6, sm: 3 }}>
+                    <TextField
+                      label="Min speakers"
+                      type="number"
+                      value={minSpeakers}
+                      onChange={(e) => setMinSpeakers(e.target.value)}
+                      fullWidth
+                      size="small"
+                      disabled={!diarize}
+                      slotProps={{ htmlInput: { min: 1 } }}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6, sm: 3 }}>
+                    <TextField
+                      label="Max speakers"
+                      type="number"
+                      value={maxSpeakers}
+                      onChange={(e) => setMaxSpeakers(e.target.value)}
+                      fullWidth
+                      size="small"
+                      disabled={!diarize}
+                      slotProps={{ htmlInput: { min: 1 } }}
+                    />
+                  </Grid>
+                  <Grid size={12}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={diarize}
+                          onChange={(e) => setDiarize(e.target.checked)}
+                        />
+                      }
+                      label="Identify speakers (diarization)"
+                    />
+                  </Grid>
+                </Grid>
+              </Box>
+            </Collapse>
+          </Box>
+
+          <Divider sx={{ my: 2 }} />
+
+          {submitError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {submitError}
+            </Alert>
+          )}
+
+          <Button
+            variant="contained"
+            size="large"
+            fullWidth
+            disabled={!file || submitting}
+            onClick={handleSubmit}
+            startIcon={<GraphicEqRoundedIcon />}
+          >
+            {submitting ? "Starting…" : "Transcribe"}
+          </Button>
+
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ mt: 1.5, display: "block", textAlign: "center" }}
+          >
+            Runs locally on CPU — expect ~50s per minute of audio.
+          </Typography>
+        </CardContent>
+      </Card>
+    </Stack>
+  );
+}

@@ -32,3 +32,12 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+
+# ─── Node / frontend (apps/web) ───────────────────────────────────────────
+node_modules/
+apps/web/dist/
+apps/web/.vite/
+
+# ─── API runtime job scratch (uploaded files + per-job temp) ──────────────
+apps/api/jobs/
+jobs/

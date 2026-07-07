@@ -10,10 +10,32 @@ faster-whisper `large-v3` (ASR) → forced alignment (word timestamps) →
 [pyannote](https://github.com/pyannote/pyannote-audio) diarization →
 word→speaker fusion.
 
+## Monorepo layout
+
+This is a **uv workspace** monorepo — one shared pipeline library used by a CLI, a
+web API, and a browser UI:
+
+```
+stt-diarization-prototype/
+├── pyproject.toml        # uv workspace root (packages/*, apps/cli, apps/api) + uv.lock
+├── env.sh, cleanup.sh    # source env.sh first: venv + HF_TOKEN + cache redirection
+├── specs/                # spec-driven docs (product/tech/structure/requirements/design/adr/tasks)
+├── packages/core/        # stt-core: the shared pipeline library (holds the version pins)
+├── apps/cli/             # stt-cli: the `transcribe` command (this README's CLI usage)
+├── apps/api/             # stt-api: FastAPI backend — see apps/api/README.md
+└── apps/web/             # Vite+React+TS+MUI frontend (separate npm project) — see apps/web/README.md
+```
+
+- **Python packages** (`packages/core`, `apps/cli`, `apps/api`) share one
+  `uv.lock`; install them all with `uv sync --all-packages`.
+- **The web app** (`apps/web`) is a **separate npm project** (not in the uv
+  workspace).
+
 > **Working on the code (human or AI agent)?** Start with [`AGENTS.md`](AGENTS.md)
 > and the [`specs/`](specs/) directory — this project is spec-driven: behavior is
 > defined in `specs/requirements.md` (EARS), architecture in `specs/design.md`,
-> and design decisions in `specs/adr/`.
+> and design decisions in `specs/adr/`. Per-app quickstarts:
+> [`apps/api/README.md`](apps/api/README.md), [`apps/web/README.md`](apps/web/README.md).
 
 ---
 
@@ -35,14 +57,14 @@ to also remove the shared Homebrew tools (`ffmpeg`, `python@3.11`).
 
 ---
 
-## Usage
+## CLI usage
 
 ```bash
 cd /Users/ybatu/workspace/stt-diarization-prototype
 source env.sh                      # activates venv, sets HF_TOKEN, redirects caches
 
 # Just point it at a file — no flags needed:
-python transcribe.py /path/to/meeting.m4a
+transcribe /path/to/meeting.m4a    # the stt-cli command (was: python transcribe.py)
 ```
 
 That's it. By default the tool auto-detects the language, auto-detects the number
@@ -99,11 +121,42 @@ distances).
 - Word-level alignment is applied when an aligner exists for the detected
   language; otherwise speakers are assigned at the segment level.
 
+---
+
+## Web app quickstart
+
+Prefer a browser (upload → live progress → transcript viewer) over the terminal?
+Run the API and the web UI:
+
+```bash
+# 0. System deps + Python workspace (once)
+brew install ffmpeg python@3.11 uv node
+uv sync --all-packages --python /opt/homebrew/opt/python@3.11/bin/python3.11   # first run; later: uv sync --all-packages
+
+# 1. Start the backend (reads HF_TOKEN from env.sh; binds 127.0.0.1:8000)
+source env.sh
+.venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000      # docs at /docs
+
+# 2. In another terminal, start the frontend (Vite dev server on :5173)
+cd apps/web && npm install && npm run dev
+```
+
+Then open **http://localhost:5173**. Everything runs locally — audio never
+leaves the machine, and the API reads `HF_TOKEN` only from its own environment
+(never from the browser). Details: [`apps/api/README.md`](apps/api/README.md),
+[`apps/web/README.md`](apps/web/README.md).
+
+---
+
 ## Requirements recreated from scratch
 
 ```bash
-brew install ffmpeg python@3.11
-/opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv
+brew install ffmpeg python@3.11 uv node
+uv sync --all-packages --python /opt/homebrew/opt/python@3.11/bin/python3.11    # first run
 source env.sh
-pip install -r requirements.txt
 ```
+
+The load-bearing Python pins live in
+[`packages/core/pyproject.toml`](packages/core/pyproject.toml); `uv sync`
+installs the whole workspace from `uv.lock` into the shared `.venv/`. (The older
+`pip install -r requirements.txt` flow still exists as a legacy reference.)

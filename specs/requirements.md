@@ -17,8 +17,8 @@ EARS patterns used:
 
 ## Input
 
-- **REQ-001** (Event) — WHEN the user runs `transcribe.py` with a path to an
-  audio file (`.wav/.mp3/.m4a/.flac/…`), THE SYSTEM SHALL transcribe its speech.
+- **REQ-001** (Event) — WHEN the user runs the CLI (`transcribe`) with a path to
+  an audio file (`.wav/.mp3/.m4a/.flac/…`), THE SYSTEM SHALL transcribe its speech.
 - **REQ-002** (Event) — WHEN the input is a video file (`.mp4/.mov/.mkv/.webm/…`),
   THE SYSTEM SHALL extract and use its audio track without requiring the user to
   convert the file first.
@@ -27,7 +27,7 @@ EARS patterns used:
 
 ## Core behavior & defaults (the no-flags path)
 
-- **REQ-010** (Event) — WHEN the user runs `transcribe.py` with an input file and
+- **REQ-010** (Event) — WHEN the user runs `transcribe` with an input file and
   no optional flags, THE SYSTEM SHALL auto-detect the language, auto-detect the
   number of speakers, apply audio enhancement, transcribe with the `large-v3`
   model, diarize, and write `<stem>.txt`, `<stem>.srt`, and `<stem>.json` into
@@ -110,6 +110,42 @@ EARS patterns used:
   caches inside the project directory and SHALL NOT write them to `~/.cache`,
   `~/Library`, or other locations outside the project. *(→ ADR-0003)*
 
+## Web app (API + frontend)
+
+The web surface reuses the same pipeline (`stt_core`) as the CLI; "the system"
+below means the API backend (`apps/api`) and its web client (`apps/web`).
+*(→ ADR-0006, ADR-0007, ADR-0008)*
+
+- **REQ-090** (Event) — WHEN the user uploads an audio or video file via the web
+  app (`POST /jobs`, multipart), THE SYSTEM SHALL accept supported audio
+  (`.wav/.mp3/.m4a/.flac/.ogg/.aac`) and video (`.mp4/.mov/.mkv/.webm/.avi`)
+  types and create a job. *(→ REQ-001, REQ-002)*
+- **REQ-091** (Unwanted) — IF the uploaded file has an unsupported type or is
+  empty or exceeds the size cap, THEN THE SYSTEM SHALL reject the request with a
+  4xx error and SHALL NOT start a job.
+- **REQ-092** (Event) — WHEN a job is created, THE SYSTEM SHALL run the
+  transcription in the background (a single in-process worker) and return a
+  `job_id` immediately without blocking the request. *(→ ADR-0008)*
+- **REQ-093** (State) — WHILE a job is running, THE SYSTEM SHALL stream progress
+  events (stage, and percent during transcription) to the client over SSE
+  (`GET /jobs/{id}/events`), AND SHALL expose the same status via a poll endpoint
+  (`GET /jobs/{id}`) as a fallback. *(→ ADR-0008)*
+- **REQ-094** (Event) — WHEN a job completes, THE SYSTEM SHALL make available a
+  result containing the detected language, the speaker count, and speaker-labeled
+  turns (`Speaker 1/2/…` with text and timestamps). *(→ REQ-060)*
+- **REQ-095** (Event) — WHEN a job has completed, THE SYSTEM SHALL let the client
+  download the transcript in `txt`, `srt`, and `json`
+  (`GET /jobs/{id}/download/{fmt}`), named after the original upload.
+  *(→ REQ-070)*
+- **REQ-096** (Ubiquitous) — THE SYSTEM SHALL read `HF_TOKEN` only from the server
+  environment and SHALL NOT accept it from the browser, log it, or return it in
+  any response. IF diarization is requested and `HF_TOKEN` is unset on the server,
+  THEN THE SYSTEM SHALL reject the job with a 4xx error explaining how to fix it.
+  *(→ REQ-062, ADR-0008)*
+- **REQ-097** (Ubiquitous) — THE SYSTEM SHALL bind the API to `127.0.0.1` (not a
+  public interface) so audio and results never leave the machine, and SHALL keep
+  per-job scratch files inside the project (`apps/api/jobs/`). *(→ ADR-0003, ADR-0008)*
+
 ---
 
 ## Verification gate
@@ -120,9 +156,10 @@ The behavioral acceptance test (no unit suite — see
 ```bash
 source env.sh
 bash make_sample.sh
-python transcribe.py samples/conversation.wav
+transcribe samples/conversation.wav        # the stt-cli console script (was: python transcribe.py)
 ```
 
 **PASS** iff `out/conversation.txt` exists, has the header (REQ-072), and lists
 **≥ 2 distinct `Speaker N`** turns with plausible text (REQ-060). This exercises
-REQ-001/010/011/040/060/070/071 end-to-end.
+REQ-001/010/011/040/060/070/071 end-to-end. The web path (REQ-090–097) passes the
+same gate by uploading the sample and confirming `result.num_speakers ≥ 2`.
