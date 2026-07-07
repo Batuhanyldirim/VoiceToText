@@ -1,0 +1,25 @@
+Hugging Face token setup (required for speaker diarization)
+===========================================================
+
+pyannote's diarization models are gated on Hugging Face, so the tool needs a
+free HF access token. Provide it in EITHER of these ways — both are git-ignored
+and never committed:
+
+  Option A — environment variable (recommended):
+      export HF_TOKEN=hf_your_token_here
+      source env.sh
+
+  Option B — token file:
+      cp .hf_token.example .hf_token   # then edit .hf_token to contain ONLY the token
+      # env.sh will read it automatically
+
+To get a token:
+  1. Create a free account at https://huggingface.co
+  2. Make a token (type: Read) at https://huggingface.co/settings/tokens
+  3. Accept the model terms (click "Agree") on:
+       https://huggingface.co/pyannote/segmentation-3.0
+       https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
+     (and optionally https://huggingface.co/pyannote/speaker-diarization-3.1)
+
+Never commit your real token. If one is ever exposed, rotate it at
+https://huggingface.co/settings/tokens

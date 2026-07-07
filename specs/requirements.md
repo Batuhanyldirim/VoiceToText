@@ -1,0 +1,128 @@
+# Requirements — `stt-diarization-prototype`
+
+Acceptance criteria for the tool's **current** behavior, written in
+[EARS](https://alistairmavin.com/ears/) (Easy Approach to Requirements Syntax).
+Each line is a testable contract. IDs (`REQ-###`) are stable anchors — a feature
+task should reference the REQ it satisfies, and behavior changes should update
+the matching REQ.
+
+EARS patterns used:
+- **Ubiquitous:** `THE SYSTEM SHALL <requirement>`
+- **Event-driven:** `WHEN <trigger>, THE SYSTEM SHALL <response>`
+- **State-driven:** `WHILE <state>, THE SYSTEM SHALL <response>`
+- **Unwanted:** `IF <condition>, THEN THE SYSTEM SHALL <response>`
+- **Optional:** `WHERE <feature is enabled>, THE SYSTEM SHALL <response>`
+
+---
+
+## Input
+
+- **REQ-001** (Event) — WHEN the user runs `transcribe.py` with a path to an
+  audio file (`.wav/.mp3/.m4a/.flac/…`), THE SYSTEM SHALL transcribe its speech.
+- **REQ-002** (Event) — WHEN the input is a video file (`.mp4/.mov/.mkv/.webm/…`),
+  THE SYSTEM SHALL extract and use its audio track without requiring the user to
+  convert the file first.
+- **REQ-003** (Unwanted) — IF the input path does not exist, THEN THE SYSTEM
+  SHALL print an error and exit with a non-zero status without loading any model.
+
+## Core behavior & defaults (the no-flags path)
+
+- **REQ-010** (Event) — WHEN the user runs `transcribe.py` with an input file and
+  no optional flags, THE SYSTEM SHALL auto-detect the language, auto-detect the
+  number of speakers, apply audio enhancement, transcribe with the `large-v3`
+  model, diarize, and write `<stem>.txt`, `<stem>.srt`, and `<stem>.json` into
+  `out/`.
+- **REQ-011** (Ubiquitous) — THE SYSTEM SHALL default to `--model large-v3`,
+  `--device cpu`, `--compute-type int8`, `--vad-onset 0.35`, enhancement ON, and
+  diarization ON.
+- **REQ-012** (State) — WHILE no `--language` is given, THE SYSTEM SHALL detect
+  the language from the audio and report it.
+- **REQ-013** (State) — WHILE neither `--min-speakers` nor `--max-speakers` is
+  given, THE SYSTEM SHALL determine the speaker count automatically.
+
+## Platform constraint
+
+- **REQ-020** (Ubiquitous) — THE SYSTEM SHALL run all inference on CPU and SHALL
+  NOT require a CUDA or MPS device. *(→ ADR-0001)*
+
+## Audio enhancement (uneven mic distance)
+
+- **REQ-030** (Optional) — WHERE enhancement is enabled (the default), THE SYSTEM
+  SHALL level the audio (high-pass + speechnorm + dynaudnorm + loudnorm) before
+  transcription so a quiet/far speaker is not dropped next to a loud/close one.
+  *(→ ADR-0004)*
+- **REQ-031** (Event) — WHEN the user passes `--no-enhance`, THE SYSTEM SHALL
+  transcribe the original audio unmodified.
+- **REQ-032** (Unwanted) — IF `ffmpeg` is not available when enhancement is
+  requested, THEN THE SYSTEM SHALL warn and continue with the original audio
+  rather than failing.
+
+## Transcription & progress
+
+- **REQ-040** (Ubiquitous) — THE SYSTEM SHALL display a live progress indicator
+  during transcription.
+- **REQ-041** (Unwanted) — IF `tqdm` is not installed, THEN THE SYSTEM SHALL
+  still transcribe, degrading to plain text output without a progress bar.
+- **REQ-042** (Ubiquitous) — THE SYSTEM SHALL support `--help` without importing
+  the heavy ML dependencies (imports are lazy).
+
+## Alignment
+
+- **REQ-050** (Event) — WHEN a forced-alignment model exists for the detected
+  language, THE SYSTEM SHALL produce word-level timestamps.
+- **REQ-051** (State) — WHILE no alignment model is available for the detected
+  language, THE SYSTEM SHALL continue and assign speakers at the segment level
+  instead of the word level (no hard failure).
+
+## Diarization
+
+- **REQ-060** (Event) — WHEN diarization is enabled (the default), THE SYSTEM
+  SHALL label each spoken segment with a speaker and render turns as
+  `Speaker 1`, `Speaker 2`, … in stable first-appearance order.
+- **REQ-061** (Unwanted) — IF the gated pyannote meta-model
+  (`speaker-diarization-3.1`) is unavailable or its terms are unaccepted, THEN
+  THE SYSTEM SHALL fall back to a component pipeline (`segmentation-3.0` +
+  `wespeaker`) and continue diarization. *(→ ADR-0005)*
+- **REQ-062** (Unwanted) — IF diarization is requested and `HF_TOKEN` is not set,
+  THEN THE SYSTEM SHALL exit non-zero and instruct the user to `source env.sh`
+  or pass `--no-diarize`.
+- **REQ-063** (Event) — WHEN the user passes `--no-diarize`, THE SYSTEM SHALL
+  produce a transcript with no speaker labels and SHALL NOT require `HF_TOKEN`.
+- **REQ-064** (Optional) — WHERE `--min-speakers` and/or `--max-speakers` are
+  given, THE SYSTEM SHALL constrain the diarization speaker count accordingly.
+
+## Output
+
+- **REQ-070** (Ubiquitous) — THE SYSTEM SHALL write three files per run into the
+  output directory, named after the input stem: `<stem>.txt` (human transcript),
+  `<stem>.srt` (subtitles), `<stem>.json` (full structured result).
+- **REQ-071** (Ubiquitous) — THE SYSTEM SHALL print the transcript to the
+  terminal and write `<stem>.txt` in the same pass, so the file content matches
+  the terminal output exactly and is flushed line-by-line.
+- **REQ-072** (Ubiquitous) — THE SYSTEM SHALL prefix the `.txt` with a header
+  reporting the source filename, detected language, and speaker count.
+- **REQ-073** (Optional) — WHERE `--out-dir` is given, THE SYSTEM SHALL write
+  outputs there instead of `out/`.
+
+## Cleanliness / footprint
+
+- **REQ-080** (Ubiquitous) — THE SYSTEM SHALL store all downloaded models and
+  caches inside the project directory and SHALL NOT write them to `~/.cache`,
+  `~/Library`, or other locations outside the project. *(→ ADR-0003)*
+
+---
+
+## Verification gate
+
+The behavioral acceptance test (no unit suite — see
+[`design.md`](design.md#testing-strategy)):
+
+```bash
+source env.sh
+bash make_sample.sh
+python transcribe.py samples/conversation.wav
+```
+
+**PASS** iff `out/conversation.txt` exists, has the header (REQ-072), and lists
+**≥ 2 distinct `Speaker N`** turns with plausible text (REQ-060). This exercises
+REQ-001/010/011/040/060/070/071 end-to-end.

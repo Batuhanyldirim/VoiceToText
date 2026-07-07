@@ -1,0 +1,15 @@
+# Speech-to-text + speaker diarization prototype (CPU / Apple Silicon, Python 3.11)
+#
+# whisperx 3.4.2 declares only loose lower bounds, so a naive install pulls
+# bleeding-edge torch/transformers/pyannote that break its (older) integration
+# code. These pins are a coherent set that whisperx 3.4.2 was actually built
+# against and that install as macOS arm64 wheels.
+whisperx==3.4.2
+torch==2.5.1
+torchaudio==2.5.1
+transformers==4.48.0
+pyannote-audio==3.3.2
+ctranslate2==4.4.0
+omegaconf>=2.3.0          # required by pyannote VAD loader; not pulled in automatically
+matplotlib>=3.7.0         # imported by pyannote-audio 3.3.2 tasks (not always auto-installed)
+tqdm>=4.66.0             # transcription progress bar

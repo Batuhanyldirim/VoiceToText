@@ -1,0 +1,34 @@
+# ─── Secrets (NEVER commit) ───────────────────────────────────────────────
+.hf_token
+*.token
+.env
+
+# ─── Downloaded models & caches (multi-GB, reproducible via requirements.txt) ─
+models/
+.pip-cache/
+.venv/
+
+# ─── Generated output ─────────────────────────────────────────────────────
+out/
+
+# ─── Media: audio & video (large; often private recordings) ───────────────
+# Keep the repo code-only. Regenerate the test clip with `bash make_sample.sh`.
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.aac
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.aiff
+samples/
+
+# ─── Python junk ──────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
