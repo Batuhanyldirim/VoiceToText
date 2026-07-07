@@ -49,8 +49,9 @@ a shell that has sourced `env.sh`, or run diarization-free jobs with
   `asyncio.Queue`, which the SSE endpoint drains.
 - **Scratch** — each job's upload + `input.{txt,srt,json}` outputs live under
   `apps/api/jobs/<id>/` (git-ignored, inside the project per ADR-0003).
-- **Limits** — 500 MB upload cap; allowed suffixes are the audio/video set in
-  `main.py`.
+- **Limits** — 50 GB upload cap (override with the `STT_MAX_UPLOAD_GB` env var);
+  uploads stream to disk in chunks (never buffered whole in RAM); allowed
+  suffixes are the audio/video set in `main.py`.
 
 ## Verify
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -40,7 +41,12 @@ app.add_middleware(
 
 manager = JobManager(JOBS_ROOT)
 
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB cap
+# Generous cap (overridable via STT_MAX_UPLOAD_GB). The upload is streamed to
+# disk in chunks (not buffered in RAM), so large files are safe memory-wise;
+# the real limit is free disk under apps/api/jobs/ and CPU time to transcribe.
+MAX_UPLOAD_GB = float(os.environ.get("STT_MAX_UPLOAD_GB", "50"))
+MAX_UPLOAD_BYTES = int(MAX_UPLOAD_GB * 1024 * 1024 * 1024)
+_CHUNK = 4 * 1024 * 1024  # 4 MB streaming chunks
 ALLOWED_SUFFIXES = {
     ".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac",
     ".mp4", ".mov", ".mkv", ".webm", ".avi",
@@ -61,15 +67,10 @@ async def create_job(
     diarize: bool = Form(True),
     model: str = Form("large-v3"),
 ) -> dict:
-    suffix = Path(file.filename or "").suffix.lower()
+    filename = file.filename or "audio"
+    suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(400, f"unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_SUFFIXES)}")
-
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, f"file too large (> {MAX_UPLOAD_BYTES // (1024*1024)} MB)")
-    if not data:
-        raise HTTPException(400, "empty file")
 
     hf_token = os.environ.get("HF_TOKEN")
     if diarize and not hf_token:
@@ -78,12 +79,34 @@ async def create_job(
                  "Start the server after `source env.sh`, or send diarize=false."
         )
 
+    # Stream the upload to disk in chunks (never buffer the whole file in RAM),
+    # enforcing the cap as we go so an oversized file is rejected without filling
+    # memory or disk.
+    job_id, job_dir, input_path = manager.new_job_dir(filename)
+    total = 0
+    try:
+        with input_path.open("wb") as out:
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, f"file too large (> {MAX_UPLOAD_GB:g} GB)")
+                out.write(chunk)
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    if total == 0:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(400, "empty file")
+
     opts = TranscribeOptions(
         model=model, language=language or None,
         diarize=diarize, min_speakers=min_speakers, max_speakers=max_speakers,
         hf_token=hf_token,
     )
-    job = manager.create(file.filename or "audio", data, opts)
+    job = manager.register(job_id, job_dir, input_path, filename, opts)
     manager.submit(job)
     return {"job_id": job.id, "status": job.status}
 

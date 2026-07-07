@@ -48,17 +48,19 @@ class JobManager:
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
 
-    def create(self, filename: str, data: bytes, opts: TranscribeOptions) -> Job:
+    def new_job_dir(self, filename: str) -> tuple[str, Path, Path]:
+        """Allocate a job id + dir and the target input path (preserving the
+        original extension so ffmpeg can decode it). No data written yet."""
         job_id = uuid.uuid4().hex[:12]
         job_dir = self.jobs_root / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
-        # preserve the original extension so ffmpeg can decode video/audio
         suffix = Path(filename).suffix or ".bin"
-        input_path = job_dir / f"input{suffix}"
-        input_path.write_bytes(data)
+        return job_id, job_dir, job_dir / f"input{suffix}"
 
+    def register(self, job_id: str, job_dir: Path, input_path: Path,
+                 filename: str, opts: TranscribeOptions) -> Job:
+        """Register a job whose input file has already been streamed to disk."""
         job = Job(id=job_id, input_path=input_path, out_dir=job_dir, opts=opts)
-        # store the original display name for output stems / headers
         job.original_name = filename  # type: ignore[attr-defined]
         self._jobs[job_id] = job
         return job
