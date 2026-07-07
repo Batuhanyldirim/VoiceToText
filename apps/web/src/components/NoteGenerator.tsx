@@ -5,10 +5,13 @@ import {
   Button,
   Card,
   CardContent,
+  CircularProgress,
   Divider,
   Grid,
   MenuItem,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   TextField,
   Typography,
 } from "@mui/material";
@@ -16,29 +19,66 @@ import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
-import type { CreateNoteBody, NoteTemplate } from "../types";
-import { createNote, getNoteTemplates } from "../config/api";
+import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
+import type {
+  CreateNoteBody,
+  NoteTemplate,
+  TranscriptInfo,
+} from "../types";
+import {
+  createNote,
+  getNoteTemplates,
+  getTranscript,
+  getTranscripts,
+} from "../config/api";
+import { languageLabel } from "../utils/format";
+
+// APPROACH (item 3): NoteGenerator focuses on the REUSE picker (option a).
+//   - When `transcript` is passed in (the transcription flow: upload → progress
+//     → result → "Klinik not oluştur"), the source is already known, so the
+//     source selector is skipped and we go straight to the template picker.
+//   - When no `transcript` is passed in (reuse mode: History → "Yeni not"), the
+//     source selector is shown with two options:
+//       (a) "Mevcut bir deşifreyi kullan" → getTranscripts() + a select; picking
+//           one calls getTranscript(name) to load .text and sets source_name.
+//       (b) "Yeni dosya yükle ve deşifre et" → onNeedTranscript() routes App to
+//           the existing upload flow, which then leads back to note generation.
+//   This wires BOTH paths to note generation while reusing the existing widgets.
 
 // The synthetic "paste your own format" choice. The server accepts template
 // "free" with a `template_text` sample; we surface it as a normal picker row.
 const FREE_TEMPLATE: NoteTemplate = {
   key: "free",
-  label: "Free-text / paste your own format",
+  label: "Serbest metin / kendi biçiminizi yapıştırın",
   description:
-    "Paste an example note in the layout you want. The model mirrors that structure.",
+    "İstediğiniz düzende örnek bir not yapıştırın. Model bu yapıyı taklit eder.",
 };
 
+type SourceMode = "reuse" | "upload";
+
 interface NoteGeneratorProps {
-  transcript: string;
+  /** Pre-loaded transcript text from the transcription flow. When present, the
+   *  source selector is skipped (we already know the source). */
+  transcript?: string;
+  /** Source name for the pre-loaded transcript (used to build the note title). */
+  sourceName?: string;
   onGenerating: (noteId: string) => void;
   onBack: () => void;
+  /** Route back to the upload flow (for the "new file" source option). */
+  onNeedTranscript?: () => void;
 }
 
 export default function NoteGenerator({
   transcript,
+  sourceName,
   onGenerating,
   onBack,
+  onNeedTranscript,
 }: NoteGeneratorProps) {
+  // When a transcript is supplied, we are in "preloaded" mode (transcription
+  // flow); otherwise we are in "reuse" mode and must pick a source first.
+  const preloaded = typeof transcript === "string";
+
   const [templates, setTemplates] = useState<NoteTemplate[]>([]);
   const [provider, setProvider] = useState<string>("ollama");
   const [cloudEnabled, setCloudEnabled] = useState(false);
@@ -49,6 +89,20 @@ export default function NoteGenerator({
   const [templateText, setTemplateText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Source-picker state (reuse mode only).
+  const [sourceMode, setSourceMode] = useState<SourceMode>("reuse");
+  const [transcripts, setTranscripts] = useState<TranscriptInfo[]>([]);
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false);
+  const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState("");
+  const [loadedText, setLoadedText] = useState<string | null>(null);
+  const [loadedName, setLoadedName] = useState<string | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+
+  // The transcript text + source name actually used for generation.
+  const effectiveTranscript = preloaded ? transcript! : loadedText ?? "";
+  const effectiveSource = preloaded ? sourceName ?? null : loadedName;
 
   useEffect(() => {
     const abort = new AbortController();
@@ -66,7 +120,7 @@ export default function NoteGenerator({
           setLoadError(
             e instanceof Error
               ? e.message
-              : "Could not load note templates. Is the service running?",
+              : "Not şablonları yüklenemedi. Servis çalışıyor mu?",
           );
         }
       } finally {
@@ -77,6 +131,57 @@ export default function NoteGenerator({
       cancelled = true;
       abort.abort();
     };
+  }, []);
+
+  // In reuse mode, load the list of existing transcripts up front.
+  useEffect(() => {
+    if (preloaded) return;
+    const abort = new AbortController();
+    let cancelled = false;
+    setTranscriptsLoading(true);
+    (async () => {
+      try {
+        const res = await getTranscripts(abort.signal);
+        if (cancelled) return;
+        setTranscripts(res);
+      } catch (e) {
+        if (!cancelled) {
+          setTranscriptsError(
+            e instanceof Error
+              ? e.message
+              : "Deşifreler yüklenemedi. Servis çalışıyor mu?",
+          );
+        }
+      } finally {
+        if (!cancelled) setTranscriptsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      abort.abort();
+    };
+  }, [preloaded]);
+
+  const handlePickTranscript = useCallback(async (name: string) => {
+    setSelectedName(name);
+    setLoadedText(null);
+    setLoadedName(null);
+    if (!name) return;
+    setTranscriptLoading(true);
+    setTranscriptsError(null);
+    try {
+      const t = await getTranscript(name);
+      setLoadedText(t.text);
+      setLoadedName(t.name);
+    } catch (e) {
+      setTranscriptsError(
+        e instanceof Error
+          ? e.message
+          : "Seçilen deşifre yüklenemedi.",
+      );
+    } finally {
+      setTranscriptLoading(false);
+    }
   }, []);
 
   // The picker lists the fetched templates plus the free-paste option. The API
@@ -101,7 +206,14 @@ export default function NoteGenerator({
   const handleGenerate = useCallback(async () => {
     setSubmitting(true);
     setSubmitError(null);
-    const body: CreateNoteBody = { transcript, template };
+    const label = activeChoice?.label ?? template;
+    const title = effectiveSource ? `${effectiveSource} — ${label}` : label;
+    const body: CreateNoteBody = {
+      transcript: effectiveTranscript,
+      template,
+      title,
+    };
+    if (effectiveSource) body.source_name = effectiveSource;
     if (isFree) body.template_text = templateText;
     try {
       const { note_id } = await createNote(body);
@@ -110,15 +222,27 @@ export default function NoteGenerator({
       setSubmitError(
         e instanceof Error
           ? e.message
-          : "Could not start note generation. Is the service running?",
+          : "Not üretimi başlatılamadı. Servis çalışıyor mu?",
       );
     } finally {
       setSubmitting(false);
     }
-  }, [transcript, template, isFree, templateText, onGenerating]);
+  }, [
+    effectiveTranscript,
+    effectiveSource,
+    template,
+    activeChoice,
+    isFree,
+    templateText,
+    onGenerating,
+  ]);
 
+  const hasTranscript = effectiveTranscript.trim().length > 0;
   const generateDisabled =
-    loading || submitting || (isFree && templateText.trim().length === 0);
+    loading ||
+    submitting ||
+    !hasTranscript ||
+    (isFree && templateText.trim().length === 0);
 
   return (
     <Stack spacing={2.5}>
@@ -129,114 +253,213 @@ export default function NoteGenerator({
           color="inherit"
           sx={{ color: "text.secondary", mb: 1 }}
         >
-          Back to transcript
+          Geri
         </Button>
         <Typography variant="h4" gutterBottom>
-          Generate a clinical note
+          Klinik not oluştur
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Turn this transcript into a structured, review-ready clinical note.
+          Bu deşifreyi yapılandırılmış, incelemeye hazır bir klinik nota
+          dönüştürün.
         </Typography>
       </Box>
 
-      <Card>
-        <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
-          {loadError && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {loadError}
-            </Alert>
-          )}
-
-          {isCloud ? (
-            <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-              ⚠️ Cloud provider enabled — the transcript will be sent to
-              Anthropic. Only use with authorization (BAA / de-identified /
-              consented data).
-            </Alert>
-          ) : (
-            <Alert
-              severity="success"
-              icon={<LockRoundedIcon fontSize="inherit" />}
-              sx={{ mb: 2 }}
+      {/* Source picker — reuse mode only. */}
+      {!preloaded && (
+        <Card>
+          <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
+            <Typography variant="h6" gutterBottom>
+              Kaynak
+            </Typography>
+            <ToggleButtonGroup
+              value={sourceMode}
+              exclusive
+              onChange={(_e, v) => {
+                if (v) setSourceMode(v as SourceMode);
+              }}
+              size="small"
+              sx={{ mb: 2, flexWrap: "wrap" }}
             >
-              Generation runs locally ({provider}) — the transcript stays on
-              this machine.
-            </Alert>
-          )}
+              <ToggleButton value="reuse">
+                Mevcut bir deşifreyi kullan
+              </ToggleButton>
+              <ToggleButton value="upload">
+                Yeni dosya yükle ve deşifre et
+              </ToggleButton>
+            </ToggleButtonGroup>
 
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, sm: isFree ? 12 : 6 }}>
-              <TextField
-                select
-                label="Note format"
-                value={template}
-                onChange={(e) => setTemplate(e.target.value)}
-                fullWidth
-                size="small"
-                disabled={loading}
-                helperText={activeChoice?.description ?? " "}
+            {sourceMode === "reuse" ? (
+              <>
+                {transcriptsError && (
+                  <Alert severity="error" sx={{ mb: 2 }}>
+                    {transcriptsError}
+                  </Alert>
+                )}
+                <TextField
+                  select
+                  label="Deşifre seç"
+                  value={selectedName}
+                  onChange={(e) => void handlePickTranscript(e.target.value)}
+                  fullWidth
+                  size="small"
+                  disabled={transcriptsLoading}
+                  helperText={
+                    transcriptsLoading
+                      ? "Deşifreler yükleniyor…"
+                      : transcripts.length === 0
+                        ? "Henüz kullanılabilir deşifre yok."
+                        : "Bir deşifre seçin."
+                  }
+                >
+                  {transcripts.map((t) => (
+                    <MenuItem key={t.name} value={t.name}>
+                      {`${t.name} · ${t.turns} konuşma · ${languageLabel(
+                        t.language,
+                      )}`}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                {transcriptLoading && (
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{ mt: 1.5, alignItems: "center" }}
+                  >
+                    <CircularProgress size={16} />
+                    <Typography variant="body2" color="text.secondary">
+                      Deşifre yükleniyor…
+                    </Typography>
+                  </Stack>
+                )}
+                {hasTranscript && !transcriptLoading && (
+                  <Alert severity="success" sx={{ mt: 1.5 }}>
+                    Deşifre yüklendi: {effectiveSource}
+                  </Alert>
+                )}
+              </>
+            ) : (
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Yeni bir ses veya video dosyasını yükleyip deşifre edin;
+                  ardından deşifre ekranından "Klinik not oluştur" ile buraya
+                  dönebilirsiniz.
+                </Typography>
+                <Button
+                  variant="contained"
+                  startIcon={<CloudUploadOutlinedIcon />}
+                  onClick={() => onNeedTranscript?.()}
+                  disabled={!onNeedTranscript}
+                >
+                  Dosya yükle ve deşifre et
+                </Button>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Template picker + generate — only relevant once we have a transcript. */}
+      {(preloaded || (sourceMode === "reuse" && hasTranscript)) && (
+        <Card>
+          <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
+            {loadError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {loadError}
+              </Alert>
+            )}
+
+            {isCloud ? (
+              <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
+                ⚠️ Bulut sağlayıcı etkin — deşifre metni Anthropic'e gönderilecek.
+                Yalnızca yetkilendirilmiş (BAA / kimliksizleştirilmiş / onamlı)
+                veriyle kullanın.
+              </Alert>
+            ) : (
+              <Alert
+                severity="success"
+                icon={<LockRoundedIcon fontSize="inherit" />}
+                sx={{ mb: 2 }}
               >
-                {choices.map((c) => (
-                  <MenuItem key={c.key} value={c.key}>
-                    {c.label}
-                  </MenuItem>
-                ))}
-              </TextField>
+                Not üretimi yerel olarak çalışıyor ({provider}) — deşifre metni bu
+                makinede kalır.
+              </Alert>
+            )}
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: isFree ? 12 : 6 }}>
+                <TextField
+                  select
+                  label="Not biçimi"
+                  value={template}
+                  onChange={(e) => setTemplate(e.target.value)}
+                  fullWidth
+                  size="small"
+                  disabled={loading}
+                  helperText={activeChoice?.description ?? " "}
+                >
+                  {choices.map((c) => (
+                    <MenuItem key={c.key} value={c.key}>
+                      {c.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+
+              {isFree && (
+                <Grid size={12}>
+                  <TextField
+                    label="Taklit edilecek örnek biçim"
+                    placeholder={
+                      "Buraya örnek bir not yapıştırın. Model bu düzeni izler, örn.\n\nBAŞVURU ŞİKAYETİ:\nÖYKÜ:\nDEĞERLENDİRME:\nPLAN:"
+                    }
+                    value={templateText}
+                    onChange={(e) => setTemplateText(e.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={6}
+                    size="small"
+                    helperText="Serbest metin biçimi için gereklidir."
+                  />
+                </Grid>
+              )}
             </Grid>
 
-            {isFree && (
-              <Grid size={12}>
-                <TextField
-                  label="Sample format to mirror"
-                  placeholder={
-                    "Paste an example note here. The model will follow this layout, e.g.\n\nCHIEF COMPLAINT:\nHISTORY:\nASSESSMENT:\nPLAN:"
-                  }
-                  value={templateText}
-                  onChange={(e) => setTemplateText(e.target.value)}
-                  fullWidth
-                  multiline
-                  minRows={6}
-                  size="small"
-                  helperText="Required for the free-text format."
-                />
-              </Grid>
+            <Divider sx={{ my: 2 }} />
+
+            {submitError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {submitError}
+              </Alert>
             )}
-          </Grid>
 
-          <Divider sx={{ my: 2 }} />
+            <Button
+              variant="contained"
+              size="large"
+              fullWidth
+              disabled={generateDisabled}
+              onClick={handleGenerate}
+              startIcon={
+                submitting ? (
+                  <AutoAwesomeRoundedIcon />
+                ) : (
+                  <DescriptionRoundedIcon />
+                )
+              }
+            >
+              {submitting ? "Başlatılıyor…" : "Klinik not oluştur"}
+            </Button>
 
-          {submitError && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {submitError}
-            </Alert>
-          )}
-
-          <Button
-            variant="contained"
-            size="large"
-            fullWidth
-            disabled={generateDisabled}
-            onClick={handleGenerate}
-            startIcon={
-              submitting ? (
-                <AutoAwesomeRoundedIcon />
-              ) : (
-                <DescriptionRoundedIcon />
-              )
-            }
-          >
-            {submitting ? "Starting…" : "Generate clinical note"}
-          </Button>
-
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ mt: 1.5, display: "block", textAlign: "center" }}
-          >
-            The note is a draft for clinician review — always verify before use.
-          </Typography>
-        </CardContent>
-      </Card>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ mt: 1.5, display: "block", textAlign: "center" }}
+            >
+              Bu not hekim incelemesi için bir taslaktır — kullanmadan önce daima
+              doğrulayın.
+            </Typography>
+          </CardContent>
+        </Card>
+      )}
     </Stack>
   );
 }

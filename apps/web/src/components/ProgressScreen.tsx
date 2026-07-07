@@ -19,16 +19,16 @@ import { ApiError, getJob, jobEventsUrl } from "../config/api";
 // as a 404. Treat that as terminal so the client shows a clear error instead of
 // polling a nonexistent job forever.
 const GONE_MESSAGE =
-  "This job is no longer available — the server may have restarted. Please upload the file again.";
+  "Bu iş artık kullanılamıyor — sunucu yeniden başlamış olabilir. Lütfen dosyayı tekrar yükleyin.";
 
 // The stages we surface in the stepper (fuse folded into diarize→done flow).
 const STEP_STAGES: Stage[] = ["enhance", "transcribe", "align", "diarize", "done"];
 const STEP_LABELS: Record<string, string> = {
-  enhance: "Enhance",
-  transcribe: "Transcribe",
-  align: "Align",
-  diarize: "Diarize",
-  done: "Done",
+  enhance: "İyileştirme",
+  transcribe: "Deşifre",
+  align: "Hizalama",
+  diarize: "Konuşmacı ayrımı",
+  done: "Tamamlandı",
 };
 
 // Map any backend stage onto a step index in STEP_STAGES.
@@ -55,7 +55,7 @@ export default function ProgressScreen({
 }: ProgressScreenProps) {
   const [stage, setStage] = useState<Stage | null>("enhance");
   const [percent, setPercent] = useState<number | null>(null);
-  const [message, setMessage] = useState<string>("Starting…");
+  const [message, setMessage] = useState<string>("Başlatılıyor…");
   const [error, setError] = useState<string | null>(null);
   const [transport, setTransport] = useState<"sse" | "polling">("sse");
 
@@ -77,7 +77,7 @@ export default function ProgressScreen({
         const job = await getJob(jobId);
         if (cancelled) return;
         if (job.status === "error") {
-          setError(job.error ?? "The job failed.");
+          setError(job.error ?? "İş başarısız oldu.");
           setStage("error");
           return;
         }
@@ -101,7 +101,7 @@ export default function ProgressScreen({
               ? GONE_MESSAGE
               : e instanceof Error
                 ? e.message
-                : "Failed to load result.",
+                : "Sonuç yüklenemedi.",
           );
           setStage("error");
         }
@@ -121,7 +121,7 @@ export default function ProgressScreen({
           setStage(job.stage);
           setPercent(job.percent);
           if (job.status === "error") {
-            setError(job.error ?? "The job failed.");
+            setError(job.error ?? "İş başarısız oldu.");
             setStage("error");
             if (pollTimer) clearInterval(pollTimer);
             return;
@@ -186,7 +186,7 @@ export default function ProgressScreen({
         // transport failure (no data) → fall back to polling on the latter.
         const data = (ev as MessageEvent).data;
         if (typeof data === "string" && data.length > 0) {
-          let msg = "The job failed.";
+          let msg = "İş başarısız oldu.";
           try {
             const parsed = JSON.parse(data) as SSEPayload;
             msg = parsed.message ?? msg;
@@ -222,7 +222,7 @@ export default function ProgressScreen({
     <Card>
       <CardContent sx={{ p: { xs: 2.5, sm: 4 } }}>
         <Typography variant="h5" gutterBottom>
-          {isError ? "Something went wrong" : "Transcribing…"}
+          {isError ? "Bir sorun oluştu" : "Deşifre ediliyor…"}
         </Typography>
         {fileName && (
           <Typography variant="body2" color="text.secondary" gutterBottom>
@@ -248,14 +248,14 @@ export default function ProgressScreen({
         {isError ? (
           <>
             <Alert severity="error" sx={{ mb: 3 }}>
-              {error ?? "The job failed."}
+              {error ?? "İş başarısız oldu."}
             </Alert>
             <Button
               variant="contained"
               startIcon={<ReplayRoundedIcon />}
               onClick={onReset}
             >
-              Start over
+              Baştan başla
             </Button>
           </>
         ) : (
@@ -275,7 +275,7 @@ export default function ProgressScreen({
             >
               <Typography variant="body2" color="text.secondary">
                 {message}
-                {transport === "polling" && " (polling)"}
+                {transport === "polling" && " (yoklama)"}
               </Typography>
               {showDeterminate && (
                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -288,7 +288,7 @@ export default function ProgressScreen({
               color="text.secondary"
               sx={{ mt: 2, display: "block" }}
             >
-              Runs locally on CPU — expect ~50s per minute of audio.
+              Yerel olarak CPU üzerinde çalışır — dakika başına ~50 sn bekleyin.
             </Typography>
           </Box>
         )}

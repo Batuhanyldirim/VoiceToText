@@ -106,6 +106,35 @@ export interface CreateNoteBody {
   template_text?: string;
   provider?: string;
   model?: string;
+  title?: string;
+  source_name?: string;
+}
+
+/** A reusable transcript from out/*.json (GET /transcripts). */
+export interface TranscriptInfo {
+  name: string;
+  turns: number;
+  language: string;
+  num_speakers: number;
+}
+
+/** A chosen transcript's flattened text (GET /transcripts/{name}). */
+export interface TranscriptText {
+  name: string;
+  language: string;
+  num_speakers: number;
+  text: string;
+}
+
+/** One saved note in the history list (GET /notes). */
+export interface SavedNoteSummary {
+  id: string;
+  created_at: string;
+  title: string;
+  source_name: string | null;
+  provider: string;
+  model: string;
+  template: string;
 }
 
 /** POST /notes response. */

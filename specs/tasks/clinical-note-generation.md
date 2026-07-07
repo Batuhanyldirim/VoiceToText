@@ -7,6 +7,29 @@ AGENTS/tech/structure/product + per-app READMEs) are updated. This file is
 retained as the design record + operational knowledge. Read `AGENTS.md` first,
 then this.
 
+### v2: Turkish + reuse + persistence (shipped)
+
+Three additions on top of the original feature (docs: REQ-106–110, ADR-0010, and
+the Turkish update to ADR-0009):
+
+- **Turkish by default.** The system prompt, the templates (`soap` = "SOAP notu",
+  `hp` = "Öykü ve Muayene (Ö&M)", plus the `free`/serbest-metin paste option), and
+  the output section headings A–E are all **Turkish** (E = "Klinik İnceleme
+  Gerekli", the review section the UI highlights). The whole web UI is Turkish.
+  The behavioral rules (faithful extraction, preserved negations, uncertainty
+  flagging, review-draft framing) are unchanged. → REQ-106, ADR-0009 (update).
+- **Transcript reuse.** `GET /transcripts` lists `out/*.json` and
+  `GET /transcripts/{name}` returns a chosen transcript's text, so a note can be
+  generated from an already-transcribed file (e.g. `HistoryTaking_YA`) instead of
+  re-uploading — a dev-cycle speedup. → REQ-107.
+- **Persistent history.** Completed notes are saved to a project-local SQLite DB
+  (`apps/api/notes.db`, `STT_DB_PATH` override, git-ignored — holds PHI) via
+  `apps/api/src/stt_api/store.py` (`NoteStore`/`SavedNote`, stdlib `sqlite3`, no
+  new dep). New endpoints: `GET /notes` (history list), `GET /notes/{id}` (also
+  serves saved notes), `DELETE /notes/{id}`. The web app has a history screen
+  (list / open / delete / new). The in-memory `NoteJobManager` still owns the live
+  streaming lifecycle; only completed notes are persisted. → REQ-108–110, ADR-0010.
+
 ## Goal
 
 After transcription, let the user turn a transcript into a **structured clinical

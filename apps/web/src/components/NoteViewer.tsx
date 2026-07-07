@@ -22,19 +22,25 @@ import { ApiError, getNote, noteEventsUrl } from "../config/api";
 
 // A vanished note job (server restarted mid-run) surfaces as a 404 — terminal.
 const GONE_MESSAGE =
-  "This note is no longer available — the server may have restarted. Please generate it again.";
+  "Bu not artık kullanılamıyor — sunucu yeniden başlamış olabilir. Lütfen tekrar oluşturun.";
 
 interface NoteViewerProps {
   noteId: string;
   onBack: () => void;
   onReset: () => void;
+  /** When false, open a SAVED note read-only: fetch getNote(id) once and render
+   *  it as done, without opening an EventSource. Defaults to true (live job). */
+  live?: boolean;
 }
 
 // Split a note into the body and a trailing "Clinician Review Needed" region
 // (section E), if present. We match a heading line that mentions clinician
-// review so we can surface it in a distinct callout.
+// review so we can surface it in a distinct callout. Matches both the Turkish
+// heading ("E) Klinik İnceleme Gerekli") and the English one, for safety.
+// The "." before "nceleme" matches the İ/i letter regardless of its casing —
+// Turkish's dotted capital İ doesn't reliably case-fold under the /i flag.
 const REVIEW_HEADING =
-  /^\s*(?:#+\s*)?(?:\*\*)?\s*(?:E[.)]\s*)?clinician review needed.*$/im;
+  /^\s*(?:#+\s*)?(?:\*\*)?\s*(?:E[.)]\s*)?(?:klinik\s+.nceleme\s+gerekli|clinician review needed).*$/im;
 
 function splitReviewSection(text: string): {
   body: string;
@@ -62,10 +68,11 @@ export default function NoteViewer({
   noteId,
   onBack,
   onReset,
+  live = true,
 }: NoteViewerProps) {
   const [note, setNote] = useState("");
   const [status, setStatus] = useState<NoteStage>("start");
-  const [message, setMessage] = useState("Starting…");
+  const [message, setMessage] = useState("Başlatılıyor…");
   const [error, setError] = useState<string | null>(null);
   const [transport, setTransport] = useState<"sse" | "polling">("sse");
   const [copied, setCopied] = useState(false);
@@ -93,7 +100,7 @@ export default function NoteViewer({
         const job = await getNote(noteId);
         if (cancelled) return;
         if (job.status === "error") {
-          setError(job.error ?? "Note generation failed.");
+          setError(job.error ?? "Not üretimi başarısız oldu.");
           setStatus("error");
           return;
         }
@@ -115,7 +122,7 @@ export default function NoteViewer({
               ? GONE_MESSAGE
               : e instanceof Error
                 ? e.message
-                : "Failed to load note.",
+                : "Not yüklenemedi.",
           );
           setStatus("error");
         }
@@ -136,7 +143,7 @@ export default function NoteViewer({
           const partial = job.result?.note ?? job.note;
           if (typeof partial === "string" && partial) setNote(partial);
           if (job.status === "error") {
-            setError(job.error ?? "Note generation failed.");
+            setError(job.error ?? "Not üretimi başarısız oldu.");
             setStatus("error");
             if (pollTimer) clearInterval(pollTimer);
             return;
@@ -159,6 +166,17 @@ export default function NoteViewer({
       pollTimer = setInterval(poll, 2000);
     }
 
+    // Read-only "open saved note" mode: no live job to stream — fetch once and
+    // render as done.
+    if (!live) {
+      void fetchResultAndFinish();
+      return () => {
+        cancelled = true;
+        abort?.abort();
+        if (pollTimer) clearInterval(pollTimer);
+      };
+    }
+
     try {
       es = new EventSource(noteEventsUrl(noteId));
 
@@ -167,7 +185,7 @@ export default function NoteViewer({
         setStatus("generating");
         const data = parse((ev as MessageEvent).data);
         if (data?.message) setMessage(data.message);
-        else setMessage("Generating…");
+        else setMessage("Oluşturuluyor…");
       });
 
       es.addEventListener("generating", (ev) => {
@@ -190,7 +208,7 @@ export default function NoteViewer({
         // not → fall back to polling on the latter.
         const data = (ev as MessageEvent).data;
         if (typeof data === "string" && data.length > 0) {
-          let msg = "Note generation failed.";
+          let msg = "Not üretimi başarısız oldu.";
           const parsed = parse(data);
           if (parsed?.message) msg = parsed.message;
           setError(msg);
@@ -212,7 +230,7 @@ export default function NoteViewer({
       abort?.abort();
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [noteId]);
+  }, [noteId, live]);
 
   const { body, review } = useMemo(() => splitReviewSection(note), [note]);
 
@@ -250,7 +268,7 @@ export default function NoteViewer({
           color="inherit"
           sx={{ color: "text.secondary", mb: 1 }}
         >
-          Back
+          Geri
         </Button>
         <Stack
           direction={{ xs: "column", md: "row" }}
@@ -262,19 +280,19 @@ export default function NoteViewer({
         >
           <Box>
             <Typography variant="h4" gutterBottom>
-              Clinical note
+              Klinik not
             </Typography>
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
               {isGenerating && (
                 <Chip
                   icon={<CircularProgress size={14} thickness={6} />}
-                  label={transport === "polling" ? "Generating (polling)" : "Generating…"}
+                  label={transport === "polling" ? "Oluşturuluyor (yoklama)" : "Oluşturuluyor…"}
                   size="small"
                   color="primary"
                   variant="outlined"
                 />
               )}
-              {isDone && <Chip label="Complete" size="small" color="success" />}
+              {isDone && <Chip label="Tamamlandı" size="small" color="success" />}
             </Stack>
           </Box>
           {isDone && (
@@ -284,21 +302,21 @@ export default function NoteViewer({
                 startIcon={<ContentCopyRoundedIcon />}
                 onClick={handleCopy}
               >
-                Copy
+                Kopyala
               </Button>
               <Button
                 variant="outlined"
                 startIcon={<DownloadRoundedIcon />}
                 onClick={handleDownload}
               >
-                Download .md
+                İndir .md
               </Button>
               <Button
                 variant="outlined"
                 startIcon={<ReplayRoundedIcon />}
                 onClick={onReset}
               >
-                Start over
+                Baştan başla
               </Button>
             </Stack>
           )}
@@ -306,22 +324,22 @@ export default function NoteViewer({
       </Box>
 
       <Alert severity="warning" icon={<WarningAmberRoundedIcon />}>
-        Draft for clinician review — not a finalized record. Verify every detail
-        against the source before use.
+        Taslak — hekim incelemesi için, nihai kayıt değildir. Kullanmadan önce
+        her ayrıntıyı kaynakla doğrulayın.
       </Alert>
 
       {isError ? (
         <Card>
           <CardContent>
             <Alert severity="error" sx={{ mb: 2 }}>
-              {error ?? "Note generation failed."}
+              {error ?? "Not üretimi başarısız oldu."}
             </Alert>
             <Button
               variant="contained"
               startIcon={<ReplayRoundedIcon />}
               onClick={onReset}
             >
-              Start over
+              Baştan başla
             </Button>
           </CardContent>
         </Card>
@@ -375,7 +393,7 @@ export default function NoteViewer({
                 >
                   <WarningAmberRoundedIcon color="warning" fontSize="small" />
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                    Clinician review needed
+                    Klinik İnceleme Gerekli
                   </Typography>
                 </Stack>
                 <Divider sx={{ mb: 1.5 }} />
@@ -392,7 +410,7 @@ export default function NoteViewer({
         open={copied}
         autoHideDuration={2000}
         onClose={() => setCopied(false)}
-        message="Clinical note copied to clipboard"
+        message="Klinik not panoya kopyalandı"
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
     </Stack>

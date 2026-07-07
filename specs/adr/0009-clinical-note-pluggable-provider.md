@@ -1,6 +1,6 @@
 # ADR-0009 — Clinical note generation via a pluggable provider (local default, cloud opt-in)
 
-**Status:** Accepted · **Relates to:** REQ-100–REQ-105, `tech.md`, `packages/note-core`, `apps/api`, `apps/web`, ADR-0003, ADR-0007, ADR-0008
+**Status:** Accepted (updated for Turkish output — see below) · **Relates to:** REQ-100–REQ-106, `tech.md`, `packages/note-core`, `apps/api`, `apps/web`, ADR-0003, ADR-0007, ADR-0008, ADR-0010
 
 ## Context
 
@@ -56,6 +56,28 @@ registry + SSE pattern as transcription (ADR-0008), exposing `GET /notes/templat
 - **Cleanup promise holds (ADR-0003).** `env.sh` sets
   `OLLAMA_MODELS="$PROJECT_ROOT/models/ollama"` so the multi-GB model blobs land
   inside the project and `rm -rf` still removes everything.
+
+## Update — Turkish by default (REQ-106)
+
+The tool is used by Turkish-speaking clinicians, so the note output is now
+**Turkish**, and this is a decision, not an accident:
+
+- **The system prompt (`prompt.py`) is Turkish**, and the output sections A–E use
+  Turkish headings: A) "Yapılandırılmış Klinik Not", B) "Hasta Bilgi Özeti",
+  C) "Soyağacı / Aile Öyküsü Özeti", D) "İstemler / Plan / Takip",
+  E) "Klinik İnceleme Gerekli". Section **E** is the review section the UI
+  highlights — the Turkish counterpart of the "Clinician Review Needed" section
+  this ADR requires be preserved.
+- **The templates (`templates.py`) are Turkish**: `soap` = "SOAP notu",
+  `hp` = "Öykü ve Muayene (Ö&M)", plus the free ("serbest metin") paste option.
+- **The whole web UI is Turkish.**
+
+The *behavioral* rules of this ADR are unchanged — faithful extraction, no
+invented facts, preserved negations, uncertainty flagged, note is a review draft.
+Only the language of the prompt, templates, and headings changed. The provider
+contract, cloud gate, and secret-handling rules all still hold. Persistence and
+transcript-reuse that layer on top of this feature are covered by
+[`ADR-0010`](0010-persistent-notes-sqlite.md).
 
 ## Consequences
 

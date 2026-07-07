@@ -15,7 +15,8 @@ Ollama). It ships as shared pipeline libraries plus thin CLI/API/web wrappers:
   as an importable function. Holds the load-bearing version pins.
 - **`note_core`** ([`packages/note-core`](packages/note-core)) — pure clinical-note
   generation (`generate(transcript, opts, progress) -> NoteResult`) via a
-  **pluggable AI provider** (local Ollama default, Claude opt-in). → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
+  **pluggable AI provider** (local Ollama default, Claude opt-in). Output is
+  **Turkish** (Turkish prompt + templates + A–E headings). → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
 - **CLI** ([`apps/cli`](apps/cli)) — thin `transcribe` wrapper; same flags/output as before.
 - **API** ([`apps/api`](apps/api)) — FastAPI backend (upload → job → live progress → download; plus note endpoints).
 - **Web** ([`apps/web`](apps/web)) — Vite + React + TS + MUI UI (built on the API).
@@ -35,9 +36,10 @@ stt-diarization-prototype/
 ├── uv.lock                   # ONE lockfile for all Python packages
 ├── specs/                    # product/tech/structure/requirements/design + adr/ + tasks/
 ├── packages/core/            # stt-core: shared transcription pipeline (HOLDS THE VERSION PINS)
-├── packages/note-core/       # note-core: pure clinical-note generation (pluggable provider; ADR-0009)
+├── packages/note-core/       # note-core: pure clinical-note generation (pluggable provider, Turkish; ADR-0009)
 ├── apps/cli/                 # stt-cli: thin CLI wrapper (transcribe)
 ├── apps/api/                 # stt-api: FastAPI backend + in-process job worker (transcribe + notes)
+│                             #   store.py = SQLite note history; notes.db = saved notes (git-ignored, PHI; ADR-0010)
 └── apps/web/                 # Vite+React+TS+MUI frontend (separate npm project, NOT in the uv workspace)
 ```
 
@@ -59,7 +61,8 @@ sourced `env.sh`. (The web app is pure npm and doesn't need `env.sh`.)
 ## Setup (from a fresh clone)
 
 The repo is code-only — `.venv/`, `models/`, `samples/`, `out/`, `apps/api/jobs/`,
-`node_modules/`, and `.hf_token` are git-ignored, so a clone has none of them yet.
+`apps/api/notes.db`, `node_modules/`, and `.hf_token` are git-ignored, so a clone
+has none of them yet.
 
 ```bash
 # 1. System deps (macOS / Apple Silicon)
@@ -129,13 +132,25 @@ ollama serve &                                # start in a shell that sourced en
 ollama pull qwen2.5:32b-instruct              # ~20 GB; lands in models/ollama
 ```
 
-Then, from a completed transcript, generate a note via the API note endpoints:
-`GET /notes/templates` · `POST /notes` · `GET /notes/{id}` (poll) ·
-`GET /notes/{id}/events` (SSE token deltas). In the web UI: transcript viewer →
-pick a template (SOAP / H&P / paste a format) → live-streamed note → copy /
-download `.md`. Cloud (Claude) is **opt-in only** — set `STT_NOTE_PROVIDER=claude`
-plus `STT_CLAUDE_API_KEY` in server env (`uv sync --extra claude` for the SDK); a
-UI banner warns that the transcript is sent off-device.
+Notes are generated in **Turkish** (Turkish prompt + templates "SOAP notu" /
+"Öykü ve Muayene (Ö&M)" + A–E headings; E = "Klinik İnceleme Gerekli" is the
+highlighted review section) and the whole web UI is Turkish. From a completed
+transcript, generate a note via the API note endpoints: `GET /notes/templates` ·
+`POST /notes` · `GET /notes/{id}` (poll) · `GET /notes/{id}/events` (SSE token
+deltas). In the web UI: transcript viewer → pick a template (or paste a serbest
+metin format) → live-streamed note → copy / download `.md`. Cloud (Claude) is
+**opt-in only** — set `STT_NOTE_PROVIDER=claude` plus `STT_CLAUDE_API_KEY` in
+server env (`uv sync --extra claude` for the SDK); a UI banner warns that the
+transcript is sent off-device.
+
+Two conveniences layer on top (→ [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)):
+- **Transcript reuse** — instead of re-uploading, pick an existing CLI transcript
+  from `out/` (`GET /transcripts` → `GET /transcripts/{name}`, e.g.
+  `HistoryTaking_YA`) and generate a note from it — a dev-cycle speedup.
+- **Persistent history** — completed notes are saved to a project-local SQLite DB
+  (`apps/api/notes.db`, `STT_DB_PATH` override, git-ignored). Browse them:
+  `GET /notes` (list) · `GET /notes/{id}` (open; also serves saved notes) ·
+  `DELETE /notes/{id}`. The web UI has a history screen (list / open / delete / new).
 
 ### The PASS/FAIL gate (behavioral — no unit suite)
 
@@ -151,10 +166,16 @@ and confirm `result.num_speakers ≥ 2` (poll `GET /jobs/{id}`). Any change must
 still pass this gate.
 
 **Note gate:** with `ollama serve` running, generating a note from that
-transcript on the default local provider must produce all five sections (A–E)
-including a populated **"Clinician Review Needed"**, flag an ambiguous term
-rather than silently "correcting" it, and keep the cloud path refused unless
-`STT_NOTE_PROVIDER=claude` + a token are set.
+transcript on the default local provider must produce all five **Turkish**
+sections (A–E) including a populated **"Klinik İnceleme Gerekli"**, flag an
+ambiguous term rather than silently "correcting" it, and keep the cloud path
+refused unless `STT_NOTE_PROVIDER=claude` + a token are set.
+
+**History round-trip:** reuse a transcript from `out/` (`GET /transcripts` →
+`GET /transcripts/{name}`), generate a note, confirm it appears in `GET /notes`,
+re-open it in full via `GET /notes/{id}` **after restarting the server** (proves
+it persisted to `apps/api/notes.db`), then `DELETE /notes/{id}`. The DB must stay
+git-ignored (`git status` should never show `notes.db`).
 
 ## Conventions
 
@@ -194,6 +215,11 @@ rather than silently "correcting" it, and keep the cloud path refused unless
   behind `STT_NOTE_PROVIDER=claude` + a server-env token (never logged/returned),
   and Ollama models must stay under `OLLAMA_MODELS` (in the project).
   → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md), [`ADR-0003`](specs/adr/0003-self-contained-caches.md)
+- **Do NOT** commit or move the notes DB. `apps/api/notes.db` holds **PHI**
+  (transcript + generated note); it's git-ignored and project-local (override with
+  `STT_DB_PATH`) so `rm -rf` still cleans up and nothing is ever committed. Keep
+  the note prompt/templates/UI **Turkish** (REQ-106) — don't revert to English.
+  → [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md), [`ADR-0003`](specs/adr/0003-self-contained-caches.md)
 
 ## Where to look
 
@@ -212,14 +238,19 @@ rather than silently "correcting" it, and keep the cloud path refused unless
 
 ## Shipped features
 
-- **Clinical note generation** — turn a transcript into a structured clinical
-  **note draft** via a **pluggable AI provider** (local Ollama by default, Claude
-  opt-in; PHI stays local). Pure logic in [`packages/note-core`](packages/note-core);
-  API note endpoints + web note screens on top. Full plan, operational knowledge,
-  and the clinical prompt are in
+- **Clinical note generation** — turn a transcript into a structured **Turkish**
+  clinical **note draft** via a **pluggable AI provider** (local Ollama by
+  default, Claude opt-in; PHI stays local). Pure logic in
+  [`packages/note-core`](packages/note-core); API note endpoints + web note
+  screens on top. Full plan, operational knowledge, and the clinical prompt are in
   [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md);
   the decision is [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
-  (REQ-100–105).
+  (REQ-100–106).
+- **Transcript reuse + persistent history** — generate notes from existing `out/`
+  transcripts (`GET /transcripts`) instead of re-uploading, and browse completed
+  notes saved to a project-local, git-ignored SQLite DB (`GET`/`DELETE /notes`,
+  `apps/api/notes.db`). → [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)
+  (REQ-107–110).
 
 ## How to add a feature (the spec-driven loop)
 

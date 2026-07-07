@@ -10,6 +10,9 @@ import type {
   JobOptions,
   Note,
   NoteTemplatesResponse,
+  SavedNoteSummary,
+  TranscriptInfo,
+  TranscriptText,
 } from "../types";
 
 export const API = "http://127.0.0.1:8000";
@@ -127,4 +130,50 @@ export async function getNote(id: string, signal?: AbortSignal): Promise<Note> {
 /** URL for the Server-Sent Events token stream of a note job. */
 export function noteEventsUrl(id: string): string {
   return `${API}/notes/${encodeURIComponent(id)}/events`;
+}
+
+// ---------------------------------------------------------------------------
+// Transcript reuse + note history
+// ---------------------------------------------------------------------------
+
+/** List existing CLI transcripts under out/*.json, available for reuse. */
+export async function getTranscripts(
+  signal?: AbortSignal,
+): Promise<TranscriptInfo[]> {
+  const res = await fetch(`${API}/transcripts`, { signal });
+  const body = await asJson<{ transcripts: TranscriptInfo[] }>(res);
+  return body.transcripts ?? [];
+}
+
+/** Fetch a chosen transcript's flattened text (to feed into a note). */
+export async function getTranscript(
+  name: string,
+  signal?: AbortSignal,
+): Promise<TranscriptText> {
+  const res = await fetch(`${API}/transcripts/${encodeURIComponent(name)}`, {
+    signal,
+  });
+  return asJson<TranscriptText>(res);
+}
+
+/** List saved notes (history), newest first. */
+export async function listNotes(
+  signal?: AbortSignal,
+): Promise<SavedNoteSummary[]> {
+  const res = await fetch(`${API}/notes`, { signal });
+  const body = await asJson<{ notes: SavedNoteSummary[] }>(res);
+  return body.notes ?? [];
+}
+
+/** Delete a saved note from history. */
+export async function deleteNote(
+  id: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    signal,
+  });
+  const body = await asJson<{ deleted: boolean }>(res);
+  return body.deleted ?? false;
 }

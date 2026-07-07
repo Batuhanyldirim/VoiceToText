@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import {
   AppBar,
   Box,
+  Button,
   Container,
   CssBaseline,
   Toolbar,
@@ -9,6 +10,8 @@ import {
 } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
+import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
+import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import theme from "./theme";
 import type { JobOptions, JobResult } from "./types";
 import { createJob } from "./config/api";
@@ -17,6 +20,7 @@ import ProgressScreen from "./components/ProgressScreen";
 import TranscriptViewer from "./components/TranscriptViewer";
 import NoteGenerator from "./components/NoteGenerator";
 import NoteViewer from "./components/NoteViewer";
+import NotesHistory from "./components/NotesHistory";
 
 type View =
   | { screen: "upload" }
@@ -34,7 +38,17 @@ type View =
       result: JobResult;
       transcript: string;
       noteId: string;
-    };
+    }
+  // Saved-note history list.
+  | { screen: "history" }
+  // Note source-picker for a brand-new note (reuse an existing transcript, or
+  // route to the upload flow). Not tied to a transcription job.
+  | { screen: "note-source" }
+  // Live token stream for a brand-new note started from the source-picker
+  // (no originating transcription job).
+  | { screen: "note-stream-fresh"; noteId: string }
+  // A saved note opened read-only from history.
+  | { screen: "note-saved"; noteId: string };
 
 /** Flatten a transcript result into "Speaker: text" lines for note generation. */
 function transcriptToText(result: JobResult): string {
@@ -61,7 +75,7 @@ export default function App() {
         setSubmitError(
           e instanceof Error
             ? e.message
-            : "Could not reach the transcription service. Is it running?",
+            : "Deşifre servisine ulaşılamadı. Çalışıyor mu?",
         );
       } finally {
         setSubmitting(false);
@@ -84,6 +98,11 @@ export default function App() {
     setView({ screen: "upload" });
   }, []);
 
+  // App bar → saved-notes history.
+  const handleOpenHistory = useCallback(() => {
+    setView({ screen: "history" });
+  }, []);
+
   // Transcript result → clinical note setup.
   const handleGenerateNote = useCallback(() => {
     setView((v) =>
@@ -98,7 +117,7 @@ export default function App() {
     );
   }, []);
 
-  // Note setup → live token stream.
+  // Note setup (from a transcription job) → live token stream.
   const handleNoteStarted = useCallback((noteId: string) => {
     setView((v) =>
       v.screen === "note-setup"
@@ -111,6 +130,12 @@ export default function App() {
           }
         : v,
     );
+  }, []);
+
+  // Note source-picker (brand-new note) → live token stream. Here we have no
+  // originating transcription job/result, so we render a standalone NoteViewer.
+  const handleFreshNoteStarted = useCallback((noteId: string) => {
+    setView({ screen: "note-stream-fresh", noteId });
   }, []);
 
   // Back from note flow → the transcript result screen.
@@ -176,6 +201,25 @@ export default function App() {
                 VoiceToText
               </Typography>
             </Box>
+
+            <Box sx={{ flexGrow: 1 }} />
+
+            <Button
+              color="inherit"
+              startIcon={<HomeRoundedIcon />}
+              onClick={handleReset}
+              sx={{ color: "text.secondary", mr: 0.5 }}
+            >
+              Ana sayfa
+            </Button>
+            <Button
+              color="inherit"
+              startIcon={<HistoryRoundedIcon />}
+              onClick={handleOpenHistory}
+              sx={{ color: "text.secondary" }}
+            >
+              Geçmiş
+            </Button>
           </Toolbar>
         </AppBar>
 
@@ -215,6 +259,40 @@ export default function App() {
             <NoteViewer
               noteId={view.noteId}
               onBack={handleBackToNoteSetup}
+              onReset={handleReset}
+            />
+          )}
+
+          {view.screen === "history" && (
+            <NotesHistory
+              onOpen={(id) => setView({ screen: "note-saved", noteId: id })}
+              onNew={() => setView({ screen: "note-source" })}
+            />
+          )}
+
+          {view.screen === "note-source" && (
+            // Reuse mode: no transcript prop → NoteGenerator shows the source
+            // picker. onNeedTranscript routes to the existing upload flow.
+            <NoteGenerator
+              onGenerating={handleFreshNoteStarted}
+              onBack={handleOpenHistory}
+              onNeedTranscript={handleReset}
+            />
+          )}
+
+          {view.screen === "note-stream-fresh" && (
+            <NoteViewer
+              noteId={view.noteId}
+              onBack={() => setView({ screen: "note-source" })}
+              onReset={handleReset}
+            />
+          )}
+
+          {view.screen === "note-saved" && (
+            <NoteViewer
+              noteId={view.noteId}
+              live={false}
+              onBack={handleOpenHistory}
               onReset={handleReset}
             />
           )}

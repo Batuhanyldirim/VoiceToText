@@ -43,15 +43,40 @@ a shell that has sourced `env.sh`, or run diarization-free jobs with
 
 ### Clinical note endpoints
 
-Turn a completed transcript into a structured clinical note (`note_core`).
-Local by default; cloud opt-in. → [ADR-0009](../../specs/adr/0009-clinical-note-pluggable-provider.md).
+Turn a completed transcript into a structured **Turkish** clinical note
+(`note_core`). Local by default; cloud opt-in.
+→ [ADR-0009](../../specs/adr/0009-clinical-note-pluggable-provider.md),
+[ADR-0010](../../specs/adr/0010-persistent-notes-sqlite.md).
 
 | Method + path | Purpose |
 |---|---|
-| `GET /notes/templates` | Available templates: `soap`, `hp`, plus a `free` paste option (`TEMPLATE_CHOICES`). |
+| `GET /notes/templates` | Available templates: `soap` ("SOAP notu"), `hp` ("Öykü ve Muayene (Ö&M)"), plus a `free` (serbest metin) paste option (`TEMPLATE_CHOICES`), and `{provider, cloud_enabled}` so the UI can show the right picker + PHI warning. |
 | `POST /notes` | Body (JSON): `transcript`, `template` (`soap`\|`hp`\|`free`), `template_text` (required when `template=="free"`), optional `provider`, optional `model` → `{note_id, status}`. Other `NoteOptions` (`temperature`, `num_ctx`, `max_tokens`) are **not** accepted over HTTP — they use server-side defaults. Runs generation on the same worker. |
-| `GET /notes/{id}` | Status poll: `{status, stage, note, result, error}`; `result` is the `NoteResult` dict when done. |
+| `GET /notes/{id}` | Status poll: `{note_id, status, provider, model, template, note, result, error}`; `note` is the accumulated text so far, `result` is the `NoteResult` dict when done. Also serves a **saved** note from the store (adds `transcript, created_at, title, source_name`), not just live jobs. |
 | `GET /notes/{id}/events` | **SSE** stream of token deltas (`stage`, `delta` during `generating`), terminal `done`/`error`. Poll `GET /notes/{id}` as a fallback. |
+
+The note output is **Turkish** — Turkish system prompt, Turkish templates, and
+Turkish section headings A–E (E = "Klinik İnceleme Gerekli", the highlighted
+review section).
+
+### Transcript reuse + note history
+
+Generate a note from an existing CLI transcript in `out/` instead of re-uploading
+(a dev-cycle speedup), and browse completed notes persisted to a project-local
+SQLite DB. → [ADR-0010](../../specs/adr/0010-persistent-notes-sqlite.md).
+
+| Method + path | Purpose |
+|---|---|
+| `GET /transcripts` | List existing CLI transcripts under `out/` (`out/*.json`) available for reuse. |
+| `GET /transcripts/{name}` | Return a chosen transcript's text (e.g. `HistoryTaking_YA`) to feed straight into `POST /notes`. |
+| `GET /notes` | **History**: saved notes newest-first as summaries (`id, created_at, title, source_name, provider, model, template`) — no transcript/note bodies. |
+| `DELETE /notes/{id}` | Delete a saved note from the store. |
+
+Completed notes are saved to **`apps/api/notes.db`** (stdlib `sqlite3`, override
+with `STT_DB_PATH`). The DB is **project-local and git-ignored** because it holds
+PHI (transcript + note) — never commit it; `rm -rf` the project still removes it
+(ADR-0003). The live/streaming lifecycle stays in-memory (`notes.py`); only
+completed notes are persisted (`store.py`).
 
 **Providers.** Default `ollama` (local, offline — the transcript never leaves the
 machine). `claude` is **opt-in only**: the API refuses it (no data sent) unless
@@ -72,6 +97,10 @@ sourced `env.sh` so `OLLAMA_MODELS` is honored). Install the cloud SDK with
   `asyncio.Queue`, which the SSE endpoint drains.
 - **Scratch** — each job's upload + `input.{txt,srt,json}` outputs live under
   `apps/api/jobs/<id>/` (git-ignored, inside the project per ADR-0003).
+- **Note history** — completed notes are persisted to `apps/api/notes.db`
+  (stdlib SQLite, `STT_DB_PATH` override) by `store.py`'s `NoteStore`; the DB is
+  git-ignored and holds PHI (ADR-0010). The in-memory `NoteJobManager`
+  (`notes.py`) owns only the live streaming lifecycle.
 - **Limits** — 50 GB upload cap (override with the `STT_MAX_UPLOAD_GB` env var);
   uploads stream to disk in chunks (never buffered whole in RAM); allowed
   suffixes are the audio/video set in `main.py`.
@@ -86,4 +115,16 @@ source env.sh && bash make_sample.sh
 curl -s -F file=@samples/conversation.wav http://127.0.0.1:8000/jobs
 # → {"job_id": "...", "status": "queued"} ; then poll:
 curl -s http://127.0.0.1:8000/jobs/<job_id>     # PASS when result.num_speakers >= 2
+```
+
+Note history round-trip (reuse → generate → persist → delete):
+
+```bash
+curl -s http://127.0.0.1:8000/transcripts                    # list out/*.json
+curl -s http://127.0.0.1:8000/transcripts/HistoryTaking_YA   # transcript text to reuse
+# POST /notes with that transcript, wait for done, then:
+curl -s http://127.0.0.1:8000/notes                          # saved note appears here
+curl -s http://127.0.0.1:8000/notes/<note_id>                # opens in full (survives a server restart)
+curl -s -X DELETE http://127.0.0.1:8000/notes/<note_id>      # removes it
+# git status must never show apps/api/notes.db (it holds PHI and is git-ignored)
 ```

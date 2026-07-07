@@ -1,9 +1,9 @@
-"""Starter note templates (the sample formats fed to section A of the prompt).
+"""Başlangıç not şablonları (A bölümüne verilen örnek formatlar), Türkçe.
 
-Ship two clinician-recognizable picks — SOAP and H&P — plus a free-text path
-where the user pastes their own sample format. The template text is inserted
-verbatim into the user prompt (see prompt.build_user_prompt); it steers the
-*format* of section A, while the system prompt governs extraction and safety.
+Hekimlerin tanıdığı iki hazır seçenek — SOAP ve Öykü & Muayene (Ö&M) — artı
+kullanıcının kendi örnek formatını yapıştırdığı serbest metin yolu. Şablon metni,
+kullanıcı istemine birebir eklenir (bkz. prompt.build_user_prompt); A bölümünün
+*formatını* yönlendirir, sistem istemi ise çıkarım ve güvenliği yönetir.
 """
 from __future__ import annotations
 
@@ -20,80 +20,80 @@ class Template:
 
 SOAP = Template(
     key="soap",
-    label="SOAP note",
-    description="Subjective, Objective, Assessment, Plan — the common outpatient format.",
+    label="SOAP notu",
+    description="Subjektif, Objektif, Değerlendirme, Plan — yaygın poliklinik formatı.",
     text="""\
-# SOAP Note
+# SOAP Notu
 
-## Subjective
-- Chief complaint:
-- History of present illness (HPI):
-- Past medical / surgical history:
-- Medications (name, dose, route, frequency, adherence):
-- Allergies:
-- Family history:
-- Social history:
-- Review of systems (ROS):
+## Subjektif
+- Ana yakınma:
+- Şimdiki hastalık öyküsü (ŞHÖ):
+- Özgeçmiş / geçirilmiş cerrahi öykü:
+- İlaçlar (ad, doz, yol, sıklık, uyum):
+- Alerjiler:
+- Aile öyküsü:
+- Sosyal öykü:
+- Sistemlerin gözden geçirilmesi (SGG):
 
-## Objective
-- Vitals (only if stated):
-- Physical exam findings (only if stated):
-- Labs / imaging / other results (only if stated):
+## Objektif
+- Vital bulgular (yalnızca belirtildiyse):
+- Fizik muayene bulguları (yalnızca belirtildiyse):
+- Laboratuvar / görüntüleme / diğer sonuçlar (yalnızca belirtildiyse):
 
-## Assessment
-- Clinician's assessment / working problems (only as stated):
+## Değerlendirme
+- Hekimin değerlendirmesi / çalışılan sorunlar (yalnızca belirtildiği gibi):
 
 ## Plan
-- Management, medications started/changed/stopped:
-- Orders, referrals, follow-up, return precautions:
+- Yönetim, başlanan/değiştirilen/kesilen ilaçlar:
+- İstemler, sevkler, takip, dönüş uyarıları:
 """,
 )
 
 HP = Template(
     key="hp",
-    label="H&P (History & Physical)",
-    description="Full history and physical — the comprehensive admission/consult format.",
+    label="Öykü ve Muayene (Ö&M)",
+    description="Tam öykü ve muayene — kapsamlı yatış/konsültasyon formatı.",
     text="""\
-# History & Physical
+# Öykü ve Muayene
 
-## Identification / Demographics
-- Patient, age, sex (only as stated):
+## Kimlik / Demografi
+- Hasta, yaş, cinsiyet (yalnızca belirtildiği gibi):
 
-## Chief Complaint
+## Ana Yakınma
 
-## History of Present Illness (HPI)
+## Şimdiki Hastalık Öyküsü (ŞHÖ)
 
-## Past Medical History (PMH)
+## Özgeçmiş (Tıbbi Öykü)
 
-## Past Surgical History (PSH)
+## Geçirilmiş Cerrahi Öykü
 
-## Medications
-- (name, dose, route, frequency, adherence, changes)
+## İlaçlar
+- (ad, doz, yol, sıklık, uyum, değişiklikler)
 
-## Allergies
+## Alerjiler
 
-## Family History
+## Aile Öyküsü
 
-## Social History
+## Sosyal Öykü
 
-## Review of Systems (ROS)
+## Sistemlerin Gözden Geçirilmesi (SGG)
 
-## Physical Examination
-- (only findings actually mentioned)
+## Fizik Muayene
+- (yalnızca fiilen bahsedilen bulgular)
 
-## Results
-- Labs / imaging / genetic / pathology (only as stated)
+## Sonuçlar
+- Laboratuvar / görüntüleme / genetik / patoloji (yalnızca belirtildiği gibi)
 
-## Assessment
+## Değerlendirme
 
 ## Plan
-- Orders, referrals, follow-up, return precautions
+- İstemler, sevkler, takip, dönüş uyarıları
 """,
 )
 
 TEMPLATES = {t.key: t for t in (SOAP, HP)}
 
-# Public metadata the API/UI can list without importing the full text eagerly.
+# API/UI'nin tam metni hemen içe aktarmadan listeleyebileceği herkese açık meta.
 TEMPLATE_CHOICES = [
     {"key": t.key, "label": t.label, "description": t.description}
     for t in (SOAP, HP)
@@ -101,17 +101,17 @@ TEMPLATE_CHOICES = [
 
 
 def resolve_template_text(template: str, template_text: str | None) -> str:
-    """Return the sample-format text for a template key, or the user's pasted
-    free-text. Raises ValueError on an unknown key or empty free-text."""
+    """Bir şablon anahtarı için örnek-format metnini ya da kullanıcının yapıştırdığı
+    serbest metni döndür. Bilinmeyen anahtar veya boş serbest metinde ValueError."""
     key = (template or "").strip().lower()
-    if key in ("free", "freetext", "free-text", "custom"):
+    if key in ("free", "freetext", "free-text", "custom", "serbest"):
         if not template_text or not template_text.strip():
             raise ValueError(
-                "template='free' requires template_text (paste a sample note format)."
+                "template='free' için template_text gerekir (bir örnek not formatı yapıştırın)."
             )
         return template_text
     tpl = TEMPLATES.get(key)
     if tpl is None:
         valid = ", ".join(sorted(TEMPLATES)) + ", free"
-        raise ValueError(f"unknown template '{template}'. Valid: {valid}")
+        raise ValueError(f"bilinmeyen şablon '{template}'. Geçerli: {valid}")
     return tpl.text

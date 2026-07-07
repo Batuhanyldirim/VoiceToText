@@ -79,7 +79,7 @@ export default function UploadScreen({
   const acceptFile = useCallback((f: File) => {
     if (!hasAcceptedExtension(f.name)) {
       setFileError(
-        `Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}`,
+        `Desteklenmeyen dosya türü. Kabul edilenler: ${ACCEPTED_EXTENSIONS.join(", ")}`,
       );
       return;
     }
@@ -123,10 +123,11 @@ export default function UploadScreen({
     <Stack spacing={3}>
       <Box sx={{ textAlign: "center" }}>
         <Typography variant="h4" gutterBottom>
-          Transcribe speech with speaker labels
+          Konuşmayı konuşmacı etiketleriyle deşifre edin
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Drop an audio or video file to get a clean, diarized transcript.
+          Temiz, konuşmacı ayrımlı bir deşifre için bir ses veya video dosyası
+          bırakın.
         </Typography>
       </Box>
 
@@ -174,10 +175,12 @@ export default function UploadScreen({
               sx={{ fontSize: 56, color: "primary.main", mb: 1 }}
             />
             <Typography variant="h6" gutterBottom>
-              {dragActive ? "Drop to upload" : "Drag & drop your file here"}
+              {dragActive
+                ? "Yüklemek için bırakın"
+                : "Dosyanızı buraya sürükleyip bırakın"}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              or click to browse
+              veya tıklayıp seçin
             </Typography>
             <Stack
               direction="row"
@@ -225,7 +228,7 @@ export default function UploadScreen({
               </Box>
               <IconButton
                 size="small"
-                aria-label="Remove file"
+                aria-label="Dosyayı kaldır"
                 onClick={() => {
                   setFile(null);
                   if (inputRef.current) inputRef.current.value = "";
@@ -244,16 +247,16 @@ export default function UploadScreen({
               color="inherit"
               sx={{ color: "text.secondary" }}
             >
-              {showOptions ? "Hide options" : "Options"}
+              {showOptions ? "Seçenekleri gizle" : "Seçenekler"}
             </Button>
             <Collapse in={showOptions}>
               <Box sx={{ pt: 2 }}>
                 <Grid container spacing={2}>
                   <Grid size={{ xs: 12, sm: 6 }}>
                     <TextField
-                      label="Language"
-                      placeholder="auto-detect"
-                      helperText="Leave blank to auto-detect (e.g. en, tr)"
+                      label="Dil"
+                      placeholder="otomatik algıla"
+                      helperText="Otomatik algılama için boş bırakın (örn. en, tr)"
                       value={language}
                       onChange={(e) => setLanguage(e.target.value)}
                       fullWidth
@@ -268,15 +271,15 @@ export default function UploadScreen({
                       onChange={(e) => setModel(e.target.value as ModelName)}
                       fullWidth
                       size="small"
-                      helperText="small is ~4x faster, less accurate"
+                      helperText="small ~4 kat daha hızlı, daha az doğru"
                     >
-                      <MenuItem value="large-v3">large-v3 (best)</MenuItem>
-                      <MenuItem value="small">small (faster)</MenuItem>
+                      <MenuItem value="large-v3">large-v3 (en iyi)</MenuItem>
+                      <MenuItem value="small">small (daha hızlı)</MenuItem>
                     </TextField>
                   </Grid>
                   <Grid size={{ xs: 6, sm: 3 }}>
                     <TextField
-                      label="Min speakers"
+                      label="En az konuşmacı"
                       type="number"
                       value={minSpeakers}
                       onChange={(e) => setMinSpeakers(e.target.value)}
@@ -288,7 +291,7 @@ export default function UploadScreen({
                   </Grid>
                   <Grid size={{ xs: 6, sm: 3 }}>
                     <TextField
-                      label="Max speakers"
+                      label="En çok konuşmacı"
                       type="number"
                       value={maxSpeakers}
                       onChange={(e) => setMaxSpeakers(e.target.value)}
@@ -306,7 +309,7 @@ export default function UploadScreen({
                           onChange={(e) => setDiarize(e.target.checked)}
                         />
                       }
-                      label="Identify speakers (diarization)"
+                      label="Konuşmacıları ayır (diyarizasyon)"
                     />
                   </Grid>
                 </Grid>
@@ -330,7 +333,7 @@ export default function UploadScreen({
             onClick={handleSubmit}
             startIcon={<GraphicEqRoundedIcon />}
           >
-            {submitting ? "Starting…" : "Transcribe"}
+            {submitting ? "Başlatılıyor…" : "Deşifre et"}
           </Button>
 
           <Typography
@@ -338,7 +341,7 @@ export default function UploadScreen({
             color="text.secondary"
             sx={{ mt: 1.5, display: "block", textAlign: "center" }}
           >
-            Runs locally on CPU — expect ~50s per minute of audio.
+            Yerel olarak CPU üzerinde çalışır — dakika başına ~50 sn bekleyin.
           </Typography>
         </CardContent>
       </Card>

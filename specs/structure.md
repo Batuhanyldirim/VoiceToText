@@ -50,8 +50,11 @@ stt-diarization-prototype/
 │   │   └── src/stt_cli/main.py       # argparse → TranscribeOptions → transcribe(); tqdm progress; writes out/
 │   ├── api/             # stt-api: FastAPI backend
 │   │   ├── pyproject.toml            # [project.scripts] stt-api = stt_api.main:run
-│   │   ├── src/stt_api/main.py       # FastAPI app + endpoints
+│   │   ├── src/stt_api/main.py       # FastAPI app + endpoints (jobs, notes, transcripts, history)
 │   │   ├── src/stt_api/jobs.py       # JobManager: registry dict + ThreadPoolExecutor(1) worker
+│   │   ├── src/stt_api/notes.py      # NoteJobManager: in-memory note job registry + SSE (live lifecycle)
+│   │   ├── src/stt_api/store.py      # NoteStore/SavedNote: SQLite persistence for completed notes (ADR-0010)
+│   │   ├── notes.db                  # persisted notes DB — GIT-IGNORED, contains PHI (ADR-0010/0003)
 │   │   └── jobs/                     # per-job scratch (uploads + outputs) — GIT-IGNORED (ADR-0003)
 │   └── web/             # Vite + React + TS + MUI frontend (separate npm project; another agent owns it)
 │
@@ -100,27 +103,42 @@ file writes); it streams token deltas through a `NoteEvent` callback. → ADR-00
 |---|---|
 | `note_core/generate.py` | `generate(transcript, opts, progress) -> NoteResult`; builds system+user prompt, selects the provider, streams deltas |
 | `note_core/providers.py` | provider protocol; `OllamaProvider` (default, local `POST /api/chat`) + `ClaudeProvider` (opt-in cloud); enforces the `STT_NOTE_PROVIDER=claude` gate |
-| `note_core/prompt.py` | the clinical-documentation system prompt (stored verbatim; preserves negations + uncertainty flagging + sections A–E) |
-| `note_core/templates.py` | `TEMPLATE_CHOICES` — `soap`, `hp`, plus the `free` paste option |
+| `note_core/prompt.py` | the **Turkish** clinical-documentation system prompt (stored verbatim; preserves negations + uncertainty flagging + Turkish sections A–E, E = "Klinik İnceleme Gerekli") |
+| `note_core/templates.py` | `TEMPLATE_CHOICES` — Turkish `soap` ("SOAP notu"), `hp` ("Öykü ve Muayene (Ö&M)"), plus the `free` ("serbest metin") paste option |
 | `note_core/models.py` | `NoteOptions` (provider, model, template, template_text, temperature, num_ctx, max_tokens), `NoteResult` |
 | `note_core/progress.py` | `NoteEvent` (stage ∈ start/generating/done/error, `delta`, `message`), `NoteCallback`, `STAGES` |
 
-Note endpoints (API, reuse the `ThreadPoolExecutor(1)` + registry + SSE pattern):
+Persistence (completed notes only) lives in `apps/api/src/stt_api/store.py`, which
+is separate from the in-memory `notes.py` registry that owns the live/streaming
+lifecycle. → [`adr/0010`](adr/0010-persistent-notes-sqlite.md)
+
+| Module / surface | Owns |
+|---|---|
+| `stt_api/notes.py` | `NoteJobManager` — in-memory note-job registry + `ThreadPoolExecutor(1)` + SSE queue; **live** generation lifecycle |
+| `stt_api/store.py` | `NoteStore` + `SavedNote` — project-local **SQLite** persistence of completed notes (list/get/save/delete); DB at `apps/api/notes.db` (git-ignored; `STT_DB_PATH` override) |
+
+Note + transcript endpoints (API, reuse the `ThreadPoolExecutor(1)` + registry + SSE pattern):
 
 | Method + path | Purpose |
 |---|---|
-| `GET /notes/templates` | the available templates (`TEMPLATE_CHOICES` + the free option) |
+| `GET /notes/templates` | the available templates (Turkish `TEMPLATE_CHOICES` + the free option) + provider/`cloud_enabled` |
 | `POST /notes` | transcript + `NoteOptions` → `{note_id}`; runs generation on the worker |
-| `GET /notes/{id}` | status poll + final `NoteResult` (poll fallback) |
+| `GET /notes/{id}` | status poll + final `NoteResult` (poll fallback); also serves a **saved** note from the store |
 | `GET /notes/{id}/events` | **SSE** stream of token deltas (`stage`, `delta`) |
+| `GET /notes` | **history**: saved notes newest-first, summaries only (no bodies) |
+| `DELETE /notes/{id}` | delete a saved note from the store |
+| `GET /transcripts` | list existing CLI transcripts under `out/` (`out/*.json`) for **reuse** |
+| `GET /transcripts/{name}` | return a chosen transcript's text (e.g. `HistoryTaking_YA`) so a note can be generated without re-uploading |
 
-Note screens (web, added *after* the transcript viewer):
+Note screens (web, Turkish UI, added *after* the transcript viewer):
 
 | Screen | What it does | API used |
 |---|---|---|
-| **Template picker** | choose SOAP / H&P / paste a free-text sample format | `GET /notes/templates` |
+| **Source picker** | reuse an existing `out/` transcript instead of uploading (dev-cycle speedup) | `GET /transcripts` · `GET /transcripts/{name}` |
+| **Template picker** | choose "SOAP notu" / "Öykü ve Muayene (Ö&M)" / paste a serbest-metin sample format | `GET /notes/templates` |
 | **NoteGenerator** | submit transcript + template → start generation | `POST /notes` |
-| **NoteViewer** | live-streamed note (sections A–E), highlights "Clinician Review Needed", copy + download `.md`; cloud warning banner when the cloud provider is enabled | `GET /notes/{id}/events` (SSE) · `GET /notes/{id}` |
+| **NoteViewer** | live-streamed Turkish note (sections A–E), highlights "Klinik İnceleme Gerekli", copy + download `.md`; cloud warning banner when the cloud provider is enabled | `GET /notes/{id}/events` (SSE) · `GET /notes/{id}` |
+| **History** | list / open / delete saved notes, or start a new one | `GET /notes` · `GET /notes/{id}` · `DELETE /notes/{id}` |
 
 ## Where a change typically goes
 
@@ -140,6 +158,9 @@ Note screens (web, added *after* the transcript viewer):
   and the web note screens pick it up.
 - **New note provider** → add an implementation in `note_core/providers.py`
   behind the provider protocol; keep the cloud gate + secret-from-server-env rule.
+- **Note persistence / history** (saved-note schema, list/get/delete) →
+  `stt_api/store.py` (`NoteStore`/`SavedNote`); keep the DB project-local +
+  git-ignored (ADR-0010). Live/streaming lifecycle stays in `stt_api/notes.py`.
 
 ## Key in-memory shapes
 

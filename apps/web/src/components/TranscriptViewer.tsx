@@ -129,7 +129,7 @@ export default function TranscriptViewer({
           >
             <Box>
               <Typography variant="h5" gutterBottom>
-                Transcript
+                Deşifre
               </Typography>
               <Stack
               direction="row"
@@ -144,11 +144,11 @@ export default function TranscriptViewer({
                 />
                 <Chip
                   icon={<RecordVoiceOverRoundedIcon />}
-                  label={`${speakerCount} speaker${speakerCount === 1 ? "" : "s"}`}
+                  label={`${speakerCount} konuşmacı`}
                   size="small"
                 />
                 <Chip
-                  label={`${turns.length} turn${turns.length === 1 ? "" : "s"}`}
+                  label={`${turns.length} konuşma`}
                   size="small"
                   variant="outlined"
                 />
@@ -165,14 +165,14 @@ export default function TranscriptViewer({
                 startIcon={<DescriptionRoundedIcon />}
                 onClick={onGenerateNote}
               >
-                Generate clinical note
+                Klinik not oluştur
               </Button>
               <Button
                 variant="outlined"
                 startIcon={<ContentCopyRoundedIcon />}
                 onClick={handleCopy}
               >
-                Copy
+                Kopyala
               </Button>
               <Button
                 variant="outlined"
@@ -195,8 +195,8 @@ export default function TranscriptViewer({
               >
                 JSON
               </Button>
-              <Tooltip title="Transcribe another file">
-                <IconButton onClick={onReset} color="primary">
+              <Tooltip title="Başka dosya deşifre et">
+                <IconButton onClick={onReset} color="primary" aria-label="Başka dosya deşifre et">
                   <ReplayRoundedIcon />
                 </IconButton>
               </Tooltip>
@@ -213,7 +213,8 @@ export default function TranscriptViewer({
                 style={{ width: "100%" }}
               />
               <Typography variant="caption" color="text.secondary">
-                Tip: click any turn to jump the player to that moment.
+                İpucu: oynatıcıyı o ana götürmek için herhangi bir konuşmaya
+                tıklayın.
               </Typography>
             </Box>
           )}
@@ -223,7 +224,7 @@ export default function TranscriptViewer({
           <TextField
             fullWidth
             size="small"
-            placeholder="Search transcript…"
+            placeholder="Deşifrede ara…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             slotProps={{
@@ -237,7 +238,7 @@ export default function TranscriptViewer({
                   <InputAdornment position="end">
                     <IconButton
                       size="small"
-                      aria-label="Clear search"
+                      aria-label="Aramayı temizle"
                       onClick={() => setQuery("")}
                     >
                       <ClearRoundedIcon fontSize="small" />
@@ -253,7 +254,7 @@ export default function TranscriptViewer({
               color="text.secondary"
               sx={{ mt: 1, display: "block" }}
             >
-              {filtered.length} matching turn{filtered.length === 1 ? "" : "s"}
+              {filtered.length} eşleşen konuşma
             </Typography>
           )}
         </CardContent>
@@ -265,8 +266,8 @@ export default function TranscriptViewer({
           {filtered.length === 0 ? (
             <Typography color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
               {turns.length === 0
-                ? "No transcript turns were produced."
-                : "No turns match your search."}
+                ? "Hiç deşifre konuşması üretilmedi."
+                : "Aramanızla eşleşen konuşma yok."}
             </Typography>
           ) : (
             <Stack spacing={2}>
@@ -288,12 +289,12 @@ export default function TranscriptViewer({
                 severity="info"
                 action={
                   <Button color="inherit" size="small" onClick={() => setShowAll(true)}>
-                    Show all
+                    Tümünü göster
                   </Button>
                 }
               >
-                Showing the first {RENDER_CAP} of {filtered.length} turns for
-                performance.
+                Performans için {filtered.length} konuşmanın ilk {RENDER_CAP}
+                tanesi gösteriliyor.
               </Alert>
             </Box>
           )}
@@ -304,7 +305,7 @@ export default function TranscriptViewer({
         open={copied}
         autoHideDuration={2000}
         onClose={() => setCopied(false)}
-        message="Transcript copied to clipboard"
+        message="Deşifre panoya kopyalandı"
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
     </Stack>

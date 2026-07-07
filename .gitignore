@@ -41,3 +41,9 @@ apps/web/.vite/
 # ─── API runtime job scratch (uploaded files + per-job temp) ──────────────
 apps/api/jobs/
 jobs/
+
+# ─── Persistent notes DB (contains PHI — NEVER commit; ADR-0003/0009) ──────
+apps/api/notes.db
+*.db
+*.db-journal
+*.db-wal

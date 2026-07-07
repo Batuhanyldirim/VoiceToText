@@ -65,8 +65,48 @@ available via GET /notes/{id} (poll fallback)
 ```
 
 Providers differ only in transport; the system/user prompt split is identical.
-The note is a **review draft**, never a finalized record — the UI keeps that
-framing and shows a cloud warning banner whenever the cloud provider is enabled.
+The note output is **Turkish** (Turkish system prompt + templates + A–E headings,
+E = "Klinik İnceleme Gerekli"), and the whole web UI is Turkish (REQ-106). The
+note is a **review draft**, never a finalized record — the UI keeps that framing
+and shows a cloud warning banner whenever the cloud provider is enabled.
+
+## Transcript reuse + persistent note history (data flow)
+
+Two conveniences layer on top of note generation without touching the pipeline or
+`note_core`. → [`adr/0010`](adr/0010-persistent-notes-sqlite.md)
+
+**Reuse** — instead of uploading a file just to re-transcribe it, the note flow
+can start from a transcript the CLI already produced under `out/`:
+
+```
+GET /transcripts            → list out/*.json (e.g. HistoryTaking_YA, conversation)
+GET /transcripts/{name}     → that transcript's text
+   ▼
+POST /notes { transcript, template, … }   (same as an uploaded-file transcript)
+```
+
+This is a dev-cycle speedup: iterate on prompts/templates against a known
+transcript without paying for transcription each time.
+
+**Persistence** — the in-memory `NoteJobManager` (notes.py) owns only the
+**live** lifecycle (queued → generating → done, SSE deltas). When a note
+*completes*, the API writes a `SavedNote` to a project-local **SQLite** store
+(`store.py`, `apps/api/notes.db`, git-ignored, `STT_DB_PATH` override):
+
+```
+note done → NoteStore.save(SavedNote{id, created_at, title, source_name,
+                                     provider, model, template, transcript, note})
+   ▼
+GET /notes           → history list (summaries, newest first, no bodies)
+GET /notes/{id}      → full saved note (falls back to the store, not just live jobs)
+DELETE /notes/{id}   → remove a saved note
+```
+
+The store uses only the stdlib `sqlite3` (no new dependency) with a short-lived
+connection per call; SQLite's own locking serializes the rare writes — enough for
+one local single-worker user. The DB holds PHI (transcript + note), so it stays
+inside the project and git-ignored: `rm -rf` still removes everything (ADR-0003)
+and nothing is ever committed.
 
 ## Design decisions (why it's built this way)
 
@@ -77,7 +117,8 @@ Each deliberate choice has an ADR — read it before changing that area:
 - **Self-contained caches** — one-command cleanup. → [`adr/0003`](adr/0003-self-contained-caches.md) · satisfies REQ-080
 - **Enhance + sensitive VAD by default** — recover quiet speakers, no flags. → [`adr/0004`](adr/0004-enhance-and-sensitive-vad-by-default.md) · satisfies REQ-030
 - **Diarizer component fallback** — work without the gated meta-model. → [`adr/0005`](adr/0005-diarizer-component-fallback.md) · satisfies REQ-061
-- **Clinical note pluggable provider** — local Ollama default (PHI on-device), cloud opt-in. → [`adr/0009`](adr/0009-clinical-note-pluggable-provider.md) · satisfies REQ-100–105
+- **Clinical note pluggable provider** — local Ollama default (PHI on-device), cloud opt-in; Turkish output. → [`adr/0009`](adr/0009-clinical-note-pluggable-provider.md) · satisfies REQ-100–106
+- **Persistent note history** — project-local, git-ignored SQLite (stdlib, single-user, PHI never committed). → [`adr/0010`](adr/0010-persistent-notes-sqlite.md) · satisfies REQ-107–110
 
 ## Error-handling & fallback strategy
 

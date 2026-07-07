@@ -30,6 +30,7 @@ from stt_core.progress import ProgressEvent
 
 from .jobs import JobManager
 from .notes import NoteJobManager
+from .store import NoteStore
 
 # --- Logging: surface our job/note lifecycle INFO lines, and quiet the known,
 # benign third-party warnings that otherwise fire on every job and bury the
@@ -64,7 +65,14 @@ app.add_middleware(
 )
 
 manager = JobManager(JOBS_ROOT)
-note_manager = NoteJobManager()
+# Durable note history (SQLite, project-local, git-ignored — ADR-0003). The
+# worker persists completed notes here; the /notes history endpoints read it.
+note_store = NoteStore()
+note_manager = NoteJobManager(store=note_store)
+
+# CLI/pipeline transcripts live in repo_root/out/*.json. From
+# apps/api/src/stt_api/main.py that's parents[4] (stt_api -> src -> api -> apps -> root).
+OUT_DIR = Path(__file__).resolve().parents[4] / "out"
 
 # Generous cap (overridable via STT_MAX_UPLOAD_GB). The upload is streamed to
 # disk in chunks (not buffered in RAM), so large files are safe memory-wise;
@@ -199,6 +207,68 @@ def download(job_id: str, fmt: str):
 
 
 # ---------------------------------------------------------------------------
+# Transcript reuse — browse transcripts the CLI/pipeline already wrote to
+# repo_root/out/*.json so the UI can feed one straight into note generation
+# without re-uploading audio. Read-only; the pipeline owns writing them.
+# ---------------------------------------------------------------------------
+
+
+def _transcript_text(data: dict) -> str:
+    """Flatten a transcript JSON's turns into "Speaker: text" lines (mirrors how
+    the web UI builds transcript text from result.turns)."""
+    lines = []
+    for turn in data.get("turns", []) or []:
+        speaker = turn.get("speaker", "")
+        text = turn.get("text", "")
+        lines.append(f"{speaker}: {text}")
+    return "\n".join(lines)
+
+
+@app.get("/transcripts")
+def list_transcripts() -> dict:
+    """List every out/*.json transcript (name = filename stem). Skips unreadable
+    files so one bad JSON doesn't break the listing."""
+    items = []
+    if OUT_DIR.is_dir():
+        for path in sorted(OUT_DIR.glob("*.json"), key=lambda p: p.stem):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 - skip unreadable/invalid files
+                continue
+            items.append({
+                "name": path.stem,
+                "turns": len(data.get("turns", []) or []),
+                "language": data.get("language"),
+                "num_speakers": data.get("num_speakers"),
+            })
+    return {"transcripts": items}
+
+
+@app.get("/transcripts/{name}")
+def get_transcript(name: str) -> dict:
+    """Return one transcript's flattened text. `name` must be a known stem — we
+    reject anything with path separators / traversal and confirm the stem is in
+    the listing before touching the filesystem."""
+    if "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(400, "invalid transcript name")
+    path = OUT_DIR / f"{name}.json"
+    # Only allow a stem that actually exists as out/<name>.json (defense-in-depth
+    # on top of the character checks above).
+    if not path.is_file() or path.parent.resolve() != OUT_DIR.resolve():
+        raise HTTPException(404, "transcript not found")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        raise HTTPException(404, "transcript not readable")
+    return {
+        "name": name,
+        "language": data.get("language"),
+        "num_speakers": data.get("num_speakers"),
+        "text": _transcript_text(data),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Clinical note generation (note_core) — mirrors the transcription job pattern.
 # The provider is chosen by the OPERATOR via server env (STT_NOTE_PROVIDER),
 # never by the browser (ADR-0009). No cloud token is ever accepted or logged.
@@ -215,6 +285,15 @@ class NoteRequest(BaseModel):
     template_text: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
+    title: Optional[str] = None
+    source_name: Optional[str] = None
+
+
+@app.get("/notes")
+def list_notes() -> dict:
+    """Durable note history (summary rows, newest first). Distinct route from the
+    static /notes/templates and the parameterized /notes/{id}."""
+    return {"notes": note_store.list()}
 
 
 @app.get("/notes/templates")
@@ -254,7 +333,10 @@ async def create_note(body: NoteRequest) -> dict:
         template=body.template,
         template_text=body.template_text,
     )
-    job = note_manager.register(body.transcript, opts)
+    job = note_manager.register(
+        body.transcript, opts,
+        title=body.title, source_name=body.source_name,
+    )
     note_manager.submit(job)
     return {"note_id": job.id, "status": job.status}
 
@@ -262,18 +344,52 @@ async def create_note(body: NoteRequest) -> dict:
 @app.get("/notes/{note_id}")
 def get_note(note_id: str) -> dict:
     job = note_manager.get(note_id)
-    if not job:
+    if job:
+        return {
+            "note_id": job.id,
+            "status": job.status,
+            "provider": job.opts.provider,
+            "model": job.opts.resolved_model(),
+            "template": job.opts.template,
+            "note": job.note_text,       # accumulated text so far
+            "result": job.result,
+            "error": job.error,
+        }
+    # Not live in memory — fall back to durable history so browsing a past note
+    # returns its full body in the same response shape (status="done").
+    saved = note_store.get(note_id)
+    if not saved:
         raise HTTPException(404, "note not found")
     return {
-        "note_id": job.id,
-        "status": job.status,
-        "provider": job.opts.provider,
-        "model": job.opts.resolved_model(),
-        "template": job.opts.template,
-        "note": job.note_text,       # accumulated text so far
-        "result": job.result,
-        "error": job.error,
+        "note_id": saved.id,
+        "status": "done",
+        "provider": saved.provider,
+        "model": saved.model,
+        "template": saved.template,
+        "note": saved.note,
+        "result": {
+            "note": saved.note,
+            "provider": saved.provider,
+            "model": saved.model,
+            "template": saved.template,
+        },
+        "error": None,
+        "created_at": saved.created_at,
+        "title": saved.title,
+        "source_name": saved.source_name,
+        "transcript": saved.transcript,
     }
+
+
+@app.delete("/notes/{note_id}")
+def delete_note(note_id: str) -> dict:
+    """Delete a note from durable history (and drop it from the in-memory
+    manager if still present). 404 if neither had it."""
+    in_memory = note_manager.discard(note_id)
+    in_store = note_store.delete(note_id)
+    if not in_memory and not in_store:
+        raise HTTPException(404, "note not found")
+    return {"deleted": True}
 
 
 @app.get("/notes/{note_id}/events")

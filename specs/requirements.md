@@ -149,10 +149,13 @@ below means the API backend (`apps/api`) and its web client (`apps/web`).
 ## Clinical note generation
 
 An optional step *after* transcription: turn a transcript into a structured
-clinical note via a **pluggable AI provider** — a local LLM (Ollama) by default,
-a cloud model (Claude) as an explicit opt-in. The note-generation logic lives in
-`note_core` (parallels `stt_core`) and is driven by the same API/web surface.
-*(→ ADR-0009, ADR-0003, ADR-0008)*
+**Turkish** clinical note via a **pluggable AI provider** — a local LLM (Ollama)
+by default, a cloud model (Claude) as an explicit opt-in. The note-generation
+logic lives in `note_core` (parallels `stt_core`) and is driven by the same
+API/web surface. A transcript can come from a fresh upload or be **reused** from
+an existing CLI transcript in `out/`; completed notes are **persisted** to a
+project-local SQLite DB and browsable as history.
+*(→ ADR-0009, ADR-0010, ADR-0003, ADR-0008)*
 
 - **REQ-100** (Event) — WHEN the user requests a note for a completed transcript
   with a chosen template (`soap`, `hp`, or a pasted `free` sample format), THE
@@ -175,6 +178,32 @@ a cloud model (Claude) as an explicit opt-in. The note-generation logic lives in
   Needed" section. *(→ ADR-0009)*
 - **REQ-105** (Ubiquitous) — THE SYSTEM SHALL keep Ollama model downloads inside
   the project (`OLLAMA_MODELS`), preserving one-command cleanup. *(→ ADR-0003)*
+- **REQ-106** (Ubiquitous) — THE SYSTEM SHALL generate the clinical note in
+  **Turkish** — a Turkish system prompt, Turkish templates (`soap` = "SOAP notu",
+  `hp` = "Öykü ve Muayene (Ö&M)"), and Turkish section headings A–E
+  (A) "Yapılandırılmış Klinik Not", B) "Hasta Bilgi Özeti", C) "Soyağacı / Aile
+  Öyküsü Özeti", D) "İstemler / Plan / Takip", E) "Klinik İnceleme Gerekli") — and
+  the web UI SHALL be Turkish throughout. Section **E** ("Klinik İnceleme Gerekli")
+  is the review section the UI highlights (the Turkish counterpart of REQ-104's
+  "Clinician Review Needed"). *(→ ADR-0009)*
+- **REQ-107** (Event) — WHEN the user browses existing CLI transcripts, THE SYSTEM
+  SHALL list the JSON transcripts under `out/` (`GET /transcripts`) and return a
+  chosen transcript's text (`GET /transcripts/{name}`) so a note can be generated
+  from an already-transcribed file (e.g. `HistoryTaking_YA`) **instead of**
+  re-uploading — a dev-cycle speedup. *(→ ADR-0009)*
+- **REQ-108** (Event) — WHEN a note finishes generating, THE SYSTEM SHALL persist
+  the completed note (id, timestamp, title, source name, provider, model,
+  template, transcript, and note body) to a project-local SQLite database so it
+  survives a server restart. *(→ ADR-0010, ADR-0003)*
+- **REQ-109** (Event) — WHEN the user opens the history screen, THE SYSTEM SHALL
+  list saved notes newest-first as summaries without bodies (`GET /notes`), open a
+  saved note in full (`GET /notes/{id}`, which also serves persisted notes, not
+  only live jobs), and delete one (`DELETE /notes/{id}`). *(→ ADR-0010)*
+- **REQ-110** (Ubiquitous) — THE SYSTEM SHALL keep the notes database
+  project-local and **git-ignored** (`apps/api/notes.db`, overridable via
+  `STT_DB_PATH`); it contains PHI and SHALL NOT be committed, and its location
+  inside the project preserves the one-command `rm -rf` cleanup.
+  *(→ ADR-0010, ADR-0003)*
 
 ---
 
@@ -194,9 +223,15 @@ transcribe samples/conversation.wav        # the stt-cli console script (was: py
 REQ-001/010/011/040/060/070/071 end-to-end. The web path (REQ-090–097) passes the
 same gate by uploading the sample and confirming `result.num_speakers ≥ 2`.
 
-**Note generation (REQ-100–105)** passes when, with `ollama serve` running
+**Note generation (REQ-100–106)** passes when, with `ollama serve` running
 (models under `OLLAMA_MODELS`), generating a note from that transcript on the
-default local provider produces all five sections (A–E) including a populated
-"Clinician Review Needed" (REQ-104), an ambiguous term is flagged rather than
-silently "corrected", and the cloud path stays refused unless
+default local provider produces all five **Turkish** sections (A–E) including a
+populated "Klinik İnceleme Gerekli" (REQ-104/REQ-106), an ambiguous term is
+flagged rather than silently "corrected", and the cloud path stays refused unless
 `STT_NOTE_PROVIDER=claude` is set with a token (REQ-101/REQ-102).
+
+**History round-trip (REQ-107–110)** passes when a transcript reused from `out/`
+(`GET /transcripts` → `GET /transcripts/{name}`) generates a note that then
+appears in `GET /notes`, can be re-opened in full via `GET /notes/{id}` after a
+server restart (proving persistence to `apps/api/notes.db`), and can be removed
+via `DELETE /notes/{id}` — with the DB file staying git-ignored.

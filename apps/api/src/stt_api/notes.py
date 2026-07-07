@@ -18,12 +18,27 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from note_core import NoteOptions, generate
 from note_core.progress import NoteEvent
 
 log = logging.getLogger("stt_api.notes")
+
+
+def _template_label(template: str) -> str:
+    """Human label for a template key ("SOAP notu"), falling back to the key
+    itself for "free"/unknown keys. Best-effort — never raises."""
+    try:
+        from note_core import TEMPLATE_CHOICES
+
+        for choice in TEMPLATE_CHOICES:
+            if choice.get("key") == template:
+                return choice.get("label") or template
+    except Exception:  # noqa: BLE001 - labeling is cosmetic
+        pass
+    return template
 
 
 @dataclass
@@ -36,22 +51,47 @@ class NoteJob:
     note_text: str = ""              # accumulated streamed note text so far
     result: Optional[dict] = None    # NoteResult.to_dict()
     error: Optional[str] = None
+    title: Optional[str] = None       # display title for the persisted note
+    source_name: Optional[str] = None  # transcript stem / uploaded name, if any
     # asyncio primitives, set when the job is submitted (bound to the running loop)
     queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     loop: Optional[asyncio.AbstractEventLoop] = field(default=None, repr=False)
 
 
 class NoteJobManager:
-    def __init__(self) -> None:
+    def __init__(self, store=None) -> None:
         self._jobs: dict[str, NoteJob] = {}
         self._executor = ThreadPoolExecutor(max_workers=1)
+        # Optional NoteStore — the worker persists completed notes into it. Kept
+        # as a constructor arg so main.py owns the single instance and tests can
+        # inject their own (or None to skip persistence).
+        self._store = store
 
     def get(self, note_id: str) -> Optional[NoteJob]:
         return self._jobs.get(note_id)
 
-    def register(self, transcript: str, opts: NoteOptions) -> NoteJob:
+    def discard(self, note_id: str) -> bool:
+        """Drop a job from the in-memory registry (used when deleting history)."""
+        return self._jobs.pop(note_id, None) is not None
+
+    def register(
+        self,
+        transcript: str,
+        opts: NoteOptions,
+        title: Optional[str] = None,
+        source_name: Optional[str] = None,
+    ) -> NoteJob:
         note_id = uuid.uuid4().hex[:12]
-        job = NoteJob(id=note_id, transcript=transcript, opts=opts)
+        if not title:
+            # Prefer the human template label ("SOAP notu"), fall back to the key.
+            title = f"{source_name or 'Not'} — {_template_label(opts.template)}"
+        job = NoteJob(
+            id=note_id,
+            transcript=transcript,
+            opts=opts,
+            title=title,
+            source_name=source_name,
+        )
         self._jobs[note_id] = job
         return job
 
@@ -92,6 +132,9 @@ class NoteJobManager:
             job.result = result.to_dict()
             job.note_text = result.note
             job.status = "done"
+            # Persist the completed note to durable history. A store failure must
+            # NOT crash the job (the in-memory result is still served), so guard.
+            self._persist(job, result.note)
             self._emit_terminal(job, NoteEvent(stage="done", message="note complete"))
             log.info("note %s DONE chars=%d in %.1fs", job.id,
                      len(result.note), time.monotonic() - t0)
@@ -101,6 +144,28 @@ class NoteJobManager:
             self._emit_terminal(job, NoteEvent(stage="error", message=job.error))
             log.exception("note %s ERROR after %.1fs: %s", job.id,
                           time.monotonic() - t0, job.error)
+
+    def _persist(self, job: NoteJob, note: str) -> None:
+        """Save a completed note to the store (best-effort; never raises)."""
+        if self._store is None:
+            return
+        try:
+            from .store import SavedNote
+
+            self._store.save(SavedNote(
+                id=job.id,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                title=job.title or f"Not — {job.opts.template}",
+                source_name=job.source_name,
+                provider=job.opts.provider,
+                model=job.opts.resolved_model(),
+                template=job.opts.template,
+                transcript=job.transcript,
+                note=note,
+            ))
+            log.info("note %s PERSISTED to store", job.id)
+        except Exception as e:  # noqa: BLE001 - persistence must not kill the job
+            log.warning("note %s persist FAILED: %s: %s", job.id, type(e).__name__, e)
 
     def _emit_terminal(self, job: NoteJob, event: NoteEvent) -> None:
         """Enqueue the authoritative terminal (done/error) event, after
