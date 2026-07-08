@@ -8,6 +8,9 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  ListItemIcon,
+  Menu,
+  MenuItem,
   Snackbar,
   Stack,
   TextField,
@@ -24,11 +27,15 @@ import TimerOutlinedIcon from "@mui/icons-material/TimerOutlined";
 import MemoryRoundedIcon from "@mui/icons-material/MemoryRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
+import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
+import PictureAsPdfRoundedIcon from "@mui/icons-material/PictureAsPdfRounded";
+import ContentPasteRoundedIcon from "@mui/icons-material/ContentPasteRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
 import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
 import PatientSelector from "./PatientSelector";
+import { markdownToPlainText, printNoteAsPdf } from "../utils/noteExport";
 import type { Note, NoteSSEPayload, NoteStage } from "../types";
 import {
   ApiError,
@@ -123,6 +130,7 @@ export default function NoteViewer({
   const [draftText, setDraftText] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
 
   const finishedRef = useRef(false);
   // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
@@ -333,6 +341,25 @@ export default function NoteViewer({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  };
+
+  // --- export (REQ-142) ----------------------------------------------------
+  const handleCopyForEhr = async () => {
+    try {
+      await navigator.clipboard.writeText(markdownToPlainText(note));
+      setToast("Düz metin (EHR için) panoya kopyalandı");
+    } catch {
+      setToast("Kopyalanamadı.");
+    }
+  };
+
+  const handlePrintPdf = () => {
+    printNoteAsPdf(note, {
+      title: "Klinik not",
+      patient: patientName,
+      status: lifecycle === "final" ? "Tamamlandı" : "Taslak",
+      finalizedAt: finalizedLabel,
+    });
   };
 
   // --- edit / finalize lifecycle (ADR-0015) --------------------------------
@@ -569,18 +596,61 @@ export default function NoteViewer({
                   )}
                   <Button
                     variant="outlined"
-                    startIcon={<ContentCopyRoundedIcon />}
-                    onClick={handleCopy}
+                    startIcon={<FileDownloadRoundedIcon />}
+                    onClick={(e) => setExportAnchor(e.currentTarget)}
                   >
-                    Kopyala
+                    Dışa aktar
                   </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<DownloadRoundedIcon />}
-                    onClick={handleDownload}
+                  <Menu
+                    anchorEl={exportAnchor}
+                    open={Boolean(exportAnchor)}
+                    onClose={() => setExportAnchor(null)}
                   >
-                    İndir .md
-                  </Button>
+                    <MenuItem
+                      onClick={() => {
+                        setExportAnchor(null);
+                        handlePrintPdf();
+                      }}
+                    >
+                      <ListItemIcon>
+                        <PictureAsPdfRoundedIcon fontSize="small" />
+                      </ListItemIcon>
+                      PDF olarak indir
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => {
+                        setExportAnchor(null);
+                        void handleCopyForEhr();
+                      }}
+                    >
+                      <ListItemIcon>
+                        <ContentPasteRoundedIcon fontSize="small" />
+                      </ListItemIcon>
+                      EHR için kopyala (düz metin)
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => {
+                        setExportAnchor(null);
+                        void handleCopy();
+                      }}
+                    >
+                      <ListItemIcon>
+                        <ContentCopyRoundedIcon fontSize="small" />
+                      </ListItemIcon>
+                      Markdown kopyala
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => {
+                        setExportAnchor(null);
+                        handleDownload();
+                      }}
+                    >
+                      <ListItemIcon>
+                        <DownloadRoundedIcon fontSize="small" />
+                      </ListItemIcon>
+                      .md indir
+                    </MenuItem>
+                  </Menu>
                   <Button
                     variant="outlined"
                     startIcon={<ReplayRoundedIcon />}

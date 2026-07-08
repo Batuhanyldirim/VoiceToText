@@ -436,6 +436,17 @@ list keeps working while patient grouping layers on top. *(→ ADR-0016, ADR-001
   The web sidebar SHALL provide a **search box** ("Notlarda ara…") that narrows
   the list as the user types. *(→ ADR-0018, ADR-0016)*
 
+## Export (Tier 1)
+
+- **REQ-142** (Event) — WHEN the user exports a note, THE SYSTEM SHALL offer
+  (a) **"PDF olarak indir"** — a clean, print-formatted PDF via the browser's
+  print dialog (a print stylesheet, no server round-trip, no extra dependency),
+  including the note title, patient (if assigned), status, and the formatted note
+  body; and (b) **"EHR için kopyala"** — copy the note as clean **plain text**
+  (markdown markers stripped, headings/bullets normalized) to the clipboard for
+  pasting into a hospital record system. The existing `.md` download and "Kopyala"
+  (raw markdown) remain. *(→ REQ-136)*
+
 ---
 
 ## Verification gate
