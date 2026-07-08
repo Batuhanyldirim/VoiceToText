@@ -12,6 +12,16 @@ import { formatSeconds } from "../utils/format";
 // UploadScreen owns the options + the single "Deşifre et" submit. The resulting
 // transcription job is indistinguishable downstream from an uploaded one, so the
 // sessions sidebar, live timer, refresh-persistence, and retry all work unchanged.
+//
+// Where does the audio live? In browser memory: MediaRecorder buffers Opus
+// chunks (chunksRef) as it records, then on stop they assemble into one Blob
+// that's uploaded. Opus is tiny (~32 kbps ≈ ~14 MB/hour), so memory is ample for
+// one local user — and it keeps the "reuse the upload path" design (no streaming
+// endpoint). `start(TIMESLICE_MS)` flushes chunks periodically so a very long
+// recording delivers data incrementally instead of only at the end.
+
+const TIMESLICE_MS = 1000;
+const METER_BARS = 7;
 
 /** A recordable container we can name with a server-accepted suffix. Every `ext`
  *  here MUST be in the API's ALLOWED_SUFFIXES (main.py). Ordered by preference —
@@ -100,30 +110,90 @@ export default function VoiceRecorder({
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  // Epoch ms when recording started — anchors the live timer (survives a refresh
-  // is moot here since a recording can't outlive the tab, but reuse keeps parity).
+  // Epoch ms when recording started — anchors the live timer (reused hook).
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
+  // Per-bar levels (0..1) for the live equalizer indicator, driven by the mic.
+  const [levels, setLevels] = useState<number[]>(() =>
+    new Array(METER_BARS).fill(0),
+  );
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const chosenFmtRef = useRef<RecordingFormat | null>(null);
-  // Tracks mount state so an async getUserMedia that resolves AFTER unmount
-  // (the permission prompt was still open when the user switched mode) can stop
-  // the freshly-granted mic stream instead of orphaning a live, un-cleanable one.
-  const isMountedRef = useRef(true);
+  // Web Audio graph for the level meter (torn down with the tracks).
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const rafRef = useRef<number | null>(null);
   // Mirror blobUrl into a ref so the unmount cleanup can revoke the latest one.
   const blobUrlRef = useRef<string | null>(null);
   useEffect(() => {
     blobUrlRef.current = blobUrl;
   }, [blobUrl]);
+  // Tracks mount state so an async getUserMedia that resolves AFTER unmount
+  // (the permission prompt was still open when the user switched mode) can stop
+  // the freshly-granted mic stream instead of orphaning a live one. Set in the
+  // effect *setup* below so React StrictMode's dev mount/unmount/remount doesn't
+  // leave it stuck false.
+  const isMountedRef = useRef(true);
 
   const elapsed = useElapsed(phase === "recording", startedAtMs);
 
+  // Tear down the Web Audio level meter (cancel the rAF loop + close the ctx).
+  const stopMeter = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    const ctx = audioCtxRef.current;
+    audioCtxRef.current = null;
+    if (ctx && ctx.state !== "closed") {
+      void ctx.close().catch(() => {});
+    }
+  }, []);
+
+  // Drive the equalizer bars from the live mic signal so the indicator visibly
+  // reacts to the user's voice (best-effort — a Web Audio failure is non-fatal).
+  const startMeter = useCallback((stream: MediaStream) => {
+    const Ctor =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctor) return;
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctor();
+    } catch {
+      return;
+    }
+    audioCtxRef.current = ctx;
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 64;
+    analyser.smoothingTimeConstant = 0.75;
+    source.connect(analyser);
+    const bins = new Uint8Array(analyser.frequencyBinCount);
+    const step = Math.max(1, Math.floor(bins.length / METER_BARS));
+    const tick = () => {
+      analyser.getByteFrequencyData(bins);
+      const next: number[] = [];
+      for (let b = 0; b < METER_BARS; b++) {
+        // Average a small slice of frequency bins per bar for a stable height.
+        let sum = 0;
+        for (let k = 0; k < step; k++) sum += bins[b * step + k] ?? 0;
+        next.push(Math.min(1, sum / step / 255));
+      }
+      setLevels(next);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
+
   const stopTracks = useCallback(() => {
+    stopMeter();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-  }, []);
+    setLevels(new Array(METER_BARS).fill(0));
+  }, [stopMeter]);
 
   const finalize = useCallback(() => {
     const recorder = recorderRef.current;
@@ -214,10 +284,11 @@ export default function VoiceRecorder({
       setPhase("idle");
     };
     recorderRef.current = recorder;
-    recorder.start();
+    recorder.start(TIMESLICE_MS);
+    startMeter(stream);
     setStartedAtMs(Date.now());
     setPhase("recording");
-  }, [finalize, stopTracks]);
+  }, [finalize, startMeter, stopTracks]);
 
   const stopRecording = useCallback(() => {
     const r = recorderRef.current;
@@ -240,10 +311,13 @@ export default function VoiceRecorder({
     setPhase("idle");
   }, [onRecordingChange]);
 
-  // Release the mic + revoke the blob URL if the component unmounts mid-record
-  // (e.g. the user switches back to file-upload mode, or the job is submitted).
-  // Null the handlers first so a stop during unmount doesn't run finalize().
+  // Mount/unmount lifecycle. Setting isMountedRef=true here (not just at useRef
+  // init) keeps it correct across React StrictMode's dev mount/unmount/remount.
+  // On real unmount (switch back to file-upload, or job submitted) release the
+  // mic + meter and revoke the blob URL. Null the handlers first so a stop during
+  // unmount doesn't run finalize().
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       const r = recorderRef.current;
@@ -259,10 +333,11 @@ export default function VoiceRecorder({
           }
         }
       }
+      stopMeter();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
     };
-  }, []);
+  }, [stopMeter]);
 
   return (
     <Box>
@@ -284,31 +359,27 @@ export default function VoiceRecorder({
             disabled={disabled}
             aria-label="Kaydı başlat"
             sx={{
-              width: 88,
-              height: 88,
+              width: 96,
+              height: 96,
               bgcolor: "primary.main",
               color: "primary.contrastText",
+              boxShadow: 3,
               "&:hover": { bgcolor: "primary.dark" },
             }}
           >
-            <MicRoundedIcon sx={{ fontSize: 44 }} />
+            <MicRoundedIcon sx={{ fontSize: 48 }} />
           </IconButton>
+          <Typography variant="body1" sx={{ fontWeight: 600 }}>
+            Ses kaydet
+          </Typography>
           <Typography variant="body2" color="text.secondary">
             Mikrofonunuzdan kaydetmek için dokunun
           </Typography>
-          <Button
-            variant="contained"
-            startIcon={<MicRoundedIcon />}
-            onClick={() => void startRecording()}
-            disabled={disabled}
-          >
-            Ses kaydet
-          </Button>
         </Stack>
       )}
 
       {phase === "recording" && (
-        <Stack spacing={2} sx={{ alignItems: "center", py: { xs: 3, sm: 4 } }}>
+        <Stack spacing={2.5} sx={{ alignItems: "center", py: { xs: 3, sm: 4 } }}>
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", color: "error.main" }}>
             <FiberManualRecordRoundedIcon
               fontSize="small"
@@ -320,10 +391,37 @@ export default function VoiceRecorder({
                 },
               }}
             />
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            <Typography variant="body1" sx={{ fontWeight: 700 }}>
               Kaydediliyor…
             </Typography>
           </Stack>
+
+          {/* Live equalizer — reacts to the mic so it's obvious we're hearing you. */}
+          <Box
+            aria-hidden
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 0.75,
+              height: 64,
+            }}
+          >
+            {levels.map((lvl, i) => (
+              <Box
+                key={i}
+                sx={{
+                  width: 8,
+                  borderRadius: 4,
+                  bgcolor: "primary.main",
+                  // Floor so idle silence still shows a small tick, not nothing.
+                  height: `${Math.max(8, lvl * 64)}px`,
+                  transition: "height 90ms linear",
+                }}
+              />
+            ))}
+          </Box>
+
           <Typography
             variant="h3"
             sx={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}

@@ -228,6 +228,45 @@ git-ignored (`git status` should never show `notes.db`).
 - Output files are named after the input **stem**; progress flows through the
   structured `ProgressEvent` callback (CLI → tqdm bar; API → SSE).
 
+## Live (streaming) transcription — the approach we chose (design-level)
+
+> Keep this. It records **what** we decided for transcribing-while-recording and
+> **why**, so nobody re-litigates it or reaches for a worse approach. Full detail:
+> [`ADR-0014`](specs/adr/0014-live-streaming-transcription.md) + [`specs/design.md`](specs/design.md) (REQ-125–131).
+
+**Goal.** Use the recording time to do the slow work, so the wait *after* the user
+hits stop is short. Not real-time captions — a few seconds behind is fine.
+
+**What we chose (and proved with a throwaway spike before building):**
+- **Chunk the ASR during recording; diarize ONCE at finish.** ASR is the slow,
+  local-window part and can overlap recording. Diarization needs the whole audio
+  (pyannote clusters speakers globally), so it stays a **single global pass at the
+  end** — never per-chunk (per-chunk speaker labels can't be matched across chunks).
+- **Cut chunks on SILENCE only, never on a fixed timer.** The spike measured
+  **99.4% word-parity** with one-shot for silence-aligned cuts vs **59.4% for
+  naive fixed cuts** — a mid-word cut mangles the word on both sides because
+  Whisper decodes each window independently (`condition_on_previous_text=False`).
+  Keep each chunk **< ~30 s** (the model window) and **offset each chunk's
+  timestamps by its absolute start** or the finish-time diarization fusion
+  misaligns.
+- **Client sends raw PCM via an `AudioWorklet`, not `MediaRecorder`.** WebM/Opus
+  `MediaRecorder` chunks aren't independently decodable (only the first has the
+  container header); PCM frames are. Downsample to 16 kHz mono in the browser.
+- **A SEPARATE ingest path.** Unlike the plain voice recorder (which reuses the
+  file-upload `POST /jobs` path — [`ADR-0013`](specs/adr/0013-in-app-voice-recording.md)),
+  streaming has its own `stt_core.StreamingTranscriber` + `/stream` endpoints.
+  `finish()` returns a normal `TranscribeResult`, so the transcript viewer,
+  downloads, and note generation are **reused unchanged**.
+- **Local-only + a tradeoff.** PCM goes only to `127.0.0.1`; **no browser/cloud
+  speech API** (the Web Speech API ships audio to Google — banned, ADR-0003).
+  Streaming **skips whole-file enhancement** (ADR-0004 needs the complete file) —
+  a documented tradeoff; a quiet/far speaker is better served by the batch
+  record/upload path. Sessions are **in-memory** (ADR-0008/0012): a restart drops
+  an in-flight stream.
+
+Measured payoff: ~43% less waiting after stop on a 60 s clip (`large-v3`), growing
+with recording length.
+
 ## Gotchas — things agents get wrong here (each backed by an ADR)
 
 - **Do NOT** switch `--device` to `mps`/`cuda`. CTranslate2 (faster-whisper's
@@ -274,6 +313,12 @@ git-ignored (`git status` should never show `notes.db`).
 - **Do NOT** revive the mandatory A–E note scaffold. The chosen template IS the
   note (+ one appended "Klinik İnceleme Gerekli"); no banner/preamble, no repeated
   content. → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
+- **Do NOT** cut streaming ASR chunks on a fixed timer, diarize per-chunk, or
+  forget to offset chunk timestamps. Cut on **silence** (mid-word cuts drop
+  words — measured 59% vs 99% parity), diarize **once at finish**, offset each
+  chunk's timestamps by its absolute start. And **never** route audio through a
+  browser/cloud speech API — streaming ASR is local-only.
+  → [`ADR-0014`](specs/adr/0014-live-streaming-transcription.md)
 
 ## Where to look
 
@@ -289,6 +334,8 @@ git-ignored (`git status` should never show `notes.db`).
 | Run/extend the web UI | [`apps/web/README.md`](apps/web/README.md) |
 | Understand clinical note generation | [`specs/adr/0009-clinical-note-pluggable-provider.md`](specs/adr/0009-clinical-note-pluggable-provider.md) + [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md) |
 | Understand the provider seam / timing / sessions | [`specs/adr/0011-selectable-note-provider-plugin-seam.md`](specs/adr/0011-selectable-note-provider-plugin-seam.md) + [`specs/design.md`](specs/design.md) |
+| Understand in-app voice recording | [`specs/adr/0013-in-app-voice-recording.md`](specs/adr/0013-in-app-voice-recording.md) |
+| Understand live/streaming transcription | the "Live (streaming) transcription" section above + [`specs/adr/0014-live-streaming-transcription.md`](specs/adr/0014-live-streaming-transcription.md) |
 | Add a feature or refactor | copy [`specs/tasks/TEMPLATE.md`](specs/tasks/TEMPLATE.md) |
 
 ## Shipped features

@@ -275,6 +275,52 @@ via an `<audio>` blob URL and can be re-recorded. Mic-permission-denied / no
 to upload: the clip leaves the machine only as the multipart upload to the
 `127.0.0.1` API (ADR-0003, REQ-097, REQ-121).
 
+## Live (streaming) transcription (data flow)
+
+An **opt-in mode of the voice recorder** that transcribes *during* recording so
+the post-stop wait shrinks to roughly the finalize pass. It is a **separate ingest
+path** from `POST /jobs` (the input is a live PCM stream, not a finished file) —
+so it does NOT reuse ADR-0013's wrap-as-File trick. → [`adr/0014`](adr/0014-live-streaming-transcription.md)
+
+```
+mic ── AudioWorklet (public/pcm-worklet.js) ──▶ Float32 PCM frames
+   │  StreamingRecorder: downsample → 16 kHz mono
+   ▼  POST /stream  → {stream_id};  POST /stream/{id}/audio  (frames, as they accrue)
+server: stt_core.StreamingTranscriber.feed(pcm)
+   │  buffer; when ≥ chunk target, cut at the QUIETEST frame in a silence window
+   │  (never mid-word) → ASR + align that chunk → OFFSET its timestamps by the
+   │  chunk's absolute start → append segments; stream text deltas out (SSE)
+   ▼  (repeats while recording — this ASR is free wall-clock)
+POST /stream/{id}/finish → StreamingTranscriber.finish():
+   │  flush tail chunk → ONE global diarization pass over ALL accumulated audio
+   │  → fuse (word/segment level, same as batch) → build_turns
+   ▼
+TranscribeResult (identical shape to batch)  → GET /stream/{id}, downloads,
+transcript viewer, note generation — ALL reused unchanged
+```
+
+Why it's shaped this way (proven by a spike; see the memory + ADR-0014):
+- **Cut only on silence.** Silence-aligned chunks measured **99.4% word-parity**
+  with one-shot; **naive fixed-interval cuts measured 59.4%** — Whisper decodes
+  each window independently (`condition_on_previous_text=False`), so a mid-word cut
+  mangles the word on both sides. Keep chunks < ~30 s (the model window).
+- **Diarize once, at finish.** pyannote clusters speakers across the whole audio;
+  per-chunk labels can't be matched. Global pass = identical speaker accuracy +
+  stable `Speaker N` order (REQ-127), and it's not the bottleneck.
+- **Offset chunk timestamps** by the chunk's absolute start before appending, or
+  the global diarization fusion misaligns (whisperx takes timestamps from the VAD
+  window, which is chunk-relative when you feed an isolated chunk).
+- **Raw PCM via AudioWorklet, not MediaRecorder.** WebM/Opus chunks aren't
+  independently decodable (only chunk 1 has the container header). PCM frames are.
+- **Local only.** PCM goes to `127.0.0.1`; all ASR is the local pipeline — no
+  browser/cloud speech API (REQ-128, ADR-0003).
+- **Enhancement is skipped in streaming mode** (REQ-131) — whole-file leveling
+  (ADR-0004) needs the complete file; a quiet/far speaker is better served by the
+  batch record/upload path. Diarization still runs at finish.
+
+Sessions are **in-memory, server-process-scoped** (ADR-0008/0012): a `make api`
+restart drops an in-flight stream, same as batch jobs.
+
 ## Design decisions (why it's built this way)
 
 Each deliberate choice has an ADR — read it before changing that area:
@@ -288,6 +334,8 @@ Each deliberate choice has an ADR — read it before changing that area:
 - **Persistent note history** — project-local, git-ignored SQLite (stdlib, single-user, PHI never committed). → [`adr/0010`](adr/0010-persistent-notes-sqlite.md) · satisfies REQ-107–110
 - **Selectable note provider + plugin seam** — operator allowlist over a generic provider registry; machine-specific/off-device integrations stay git-ignored (`_local_providers`, `env.local.sh`); the committed repo ships only Ollama. Also covers timing metrics, the sessions sidebar, refresh-safe persistence, and retry. → [`adr/0011`](adr/0011-selectable-note-provider-plugin-seam.md) · satisfies REQ-111–113, REQ-116–119
 - **Note-output reshape** — the chosen template *is* the note (+ one appended review section), anti-preamble, pedigree only when family history is rich; applies to every provider. → [`adr/0009`](adr/0009-clinical-note-pluggable-provider.md) · satisfies REQ-114–115
+- **In-app voice recording** — a browser `MediaRecorder` clip is wrapped as a File and pushed through the *existing* upload path (no second pipeline); client picks a server-accepted container. → [`adr/0013`](adr/0013-in-app-voice-recording.md) · satisfies REQ-120–124
+- **Live (streaming) transcription** — chunk ASR during recording (silence-aligned cuts, <30 s, timestamps offset), one global diarization pass at finish; a *separate* PCM-stream ingest path, local-only, enhancement skipped as a tradeoff. → [`adr/0014`](adr/0014-live-streaming-transcription.md) · satisfies REQ-125–131
 
 ## Error-handling & fallback strategy
 

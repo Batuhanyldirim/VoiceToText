@@ -11,9 +11,11 @@ See specs/ (product/tech/design + ADRs) for the contract and rationale.
 from .models import TranscribeOptions, TranscribeResult, Turn
 from .pipeline import MissingTokenError, transcribe
 from .progress import STAGES, ProgressEvent
+from .streaming import StreamingTranscriber
 
 __all__ = [
     "transcribe",
+    "StreamingTranscriber",
     "TranscribeOptions",
     "TranscribeResult",
     "Turn",

@@ -322,6 +322,50 @@ ADR-0008, ADR-0012, ADR-0003)*
   SYSTEM SHALL surface the error rather than starting an un-decodable job.
   *(→ ADR-0013, REQ-090, REQ-091)*
 
+## Live (streaming) transcription during recording
+
+An opt-in mode of the voice recorder that **transcribes while you record** so the
+post-stop wait shrinks to roughly the finalize (diarize) pass. The browser
+streams raw PCM to the local API, which transcribes silence-aligned chunks
+incrementally and, on finish, runs a single global diarization pass and returns a
+transcript **whose accuracy matches the one-shot pipeline** (a spike measured
+99.4% word-parity vs one-shot; naive fixed-cut chunking measured 59.4%, which is
+why silence-aligned cutting is mandatory). This is a **separate ingest path** from
+`POST /jobs` — not the file-upload reuse — so it has its own endpoints and its own
+ADR. *(→ ADR-0014, ADR-0008, ADR-0012, ADR-0003)*
+
+- **REQ-125** (Event) — WHEN the user records with **live transcription** enabled
+  and stops, THE SYSTEM SHALL have transcribed the audio **incrementally during
+  recording** (chunk-level ASR as audio arrives) and SHALL, on finish, produce a
+  full speaker-labeled transcript **equivalent in accuracy to the one-shot
+  pipeline** for the same audio. *(→ ADR-0014)*
+- **REQ-126** (Ubiquitous) — THE SYSTEM SHALL cut streaming ASR chunks **only on
+  detected silence** (never mid-word), keep each chunk **under the model's ~30 s
+  window**, and **offset each chunk's timestamps by its absolute start**, so word
+  accuracy at chunk boundaries is preserved. IF a single utterance exceeds the
+  chunk target with no pause, THEN THE SYSTEM SHALL cut at the quietest point in a
+  bounded search window. *(→ ADR-0014)*
+- **REQ-127** (Ubiquitous) — THE SYSTEM SHALL run **diarization as a single global
+  pass over the full accumulated audio at finish** (never per-chunk), then align,
+  fuse, and build turns — so speaker labels and their stable `Speaker N` ordering
+  match the batch pipeline. *(→ ADR-0014, REQ-060)*
+- **REQ-128** (Ubiquitous) — THE SYSTEM SHALL keep streamed audio **on-device**:
+  raw PCM is sent only to the local `127.0.0.1` API and SHALL NOT use any
+  browser/cloud speech service (e.g. the Web Speech API). All ASR runs in the
+  local pipeline. *(→ ADR-0014, ADR-0003, REQ-097, REQ-128 mirrors REQ-121)*
+- **REQ-129** (State) — WHILE streaming, THE SYSTEM SHALL show the **live-growing
+  transcript** (SSE, a few seconds behind speech is acceptable) and a live elapsed
+  timer, and on finish SHALL transition to the normal transcript viewer so
+  download and note generation are reused unchanged. *(→ ADR-0014, REQ-116)*
+- **REQ-130** (Unwanted) — IF the browser lacks `AudioWorklet`/`getUserMedia`, or
+  microphone permission is denied, THEN THE SYSTEM SHALL show a clear **Turkish**
+  message and SHALL NOT start a streaming session (the non-streaming recorder and
+  file upload remain available as fallbacks). *(→ ADR-0014, REQ-122)*
+- **REQ-131** (Ubiquitous) — THE SYSTEM SHALL treat live transcription as
+  forgoing the **whole-file enhancement** pass (a documented tradeoff for
+  incremental speed; the batch upload/record paths keep enhancement), while still
+  diarizing at finish. *(→ ADR-0014, ADR-0004)*
+
 ---
 
 ## Verification gate

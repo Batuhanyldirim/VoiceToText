@@ -17,8 +17,16 @@ export type PersistedView =
   | { screen: "progress"; jobId: string; fileName: string | null }
   // A finished transcript being viewed. Rehydrate result via getJob(jobId).
   | { screen: "result"; jobId: string; fileName: string | null }
-  // Note generation started from a transcription job (result re-fetched).
-  | { screen: "note-stream"; jobId: string; fileName: string | null; noteId: string }
+  // Note generation started from a transcription job (result re-fetched). When
+  // `source` is "stream" the jobId is a stream id (not a /jobs id), so restore
+  // must NOT getJob() it — re-attach the note by noteId alone.
+  | {
+      screen: "note-stream";
+      jobId: string;
+      fileName: string | null;
+      noteId: string;
+      source?: "jobs" | "stream";
+    }
   | { screen: "note-source" }
   | { screen: "note-stream-fresh"; noteId: string }
   | { screen: "note-saved"; noteId: string };

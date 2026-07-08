@@ -26,8 +26,10 @@ import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
-import type { JobOptions, ModelName } from "../types";
+import GraphicEqOutlinedIcon from "@mui/icons-material/GraphicEqOutlined";
+import type { JobOptions, JobResult, ModelName } from "../types";
 import VoiceRecorder from "./VoiceRecorder";
+import StreamingRecorder from "./StreamingRecorder";
 
 const ACCEPTED_EXTENSIONS = [
   ".wav",
@@ -65,19 +67,25 @@ interface UploadScreenProps {
   /** Optional: jump straight to generating a note from an already-transcribed
    *  file in out/ (skips upload + transcription — handy for dev/testing). */
   onUseExisting?: () => void;
+  /** Live-transcription finished — hand the finished result up (ADR-0014). */
+  onStreamComplete?: (streamId: string, result: JobResult, name: string) => void;
 }
+
+type CaptureMode = "upload" | "record" | "stream";
 
 export default function UploadScreen({
   onSubmit,
   submitting,
   submitError,
   onUseExisting,
+  onStreamComplete,
 }: UploadScreenProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  // Which capture source is showing: drop/pick a file, or record from the mic.
-  // A recording becomes a File too, so both feed the SAME submit path (ADR-0013).
-  const [mode, setMode] = useState<"upload" | "record">("upload");
+  // Which capture source is showing: drop/pick a file, record from the mic, or
+  // live-transcribe while recording. Upload+record share the SAME submit path (a
+  // recording becomes a File — ADR-0013); "stream" uses the /stream path (ADR-0014).
+  const [mode, setMode] = useState<CaptureMode>("upload");
   const [dragActive, setDragActive] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -102,7 +110,7 @@ export default function UploadScreen({
   // Switch capture source. Clearing the staged file on switch avoids submitting
   // a stale pick after moving to the recorder (and vice-versa).
   const handleModeChange = useCallback(
-    (_e: React.MouseEvent<HTMLElement>, next: "upload" | "record" | null) => {
+    (_e: React.MouseEvent<HTMLElement>, next: CaptureMode | null) => {
       if (!next || next === mode) return;
       setFile(null);
       setFileError(null);
@@ -111,6 +119,14 @@ export default function UploadScreen({
     },
     [mode],
   );
+
+  const streamOptions: JobOptions = {
+    language: language.trim() || undefined,
+    diarize,
+    model,
+    ...(Number.isNaN(parseInt(minSpeakers, 10)) ? {} : { min_speakers: parseInt(minSpeakers, 10) }),
+    ...(Number.isNaN(parseInt(maxSpeakers, 10)) ? {} : { max_speakers: parseInt(maxSpeakers, 10) }),
+  };
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -190,6 +206,12 @@ export default function UploadScreen({
               <MicRoundedIcon fontSize="small" sx={{ mr: 1 }} />
               Ses kaydet
             </ToggleButton>
+            {onStreamComplete && (
+              <ToggleButton value="stream" disabled={submitting}>
+                <GraphicEqOutlinedIcon fontSize="small" sx={{ mr: 1 }} />
+                Canlı deşifre
+              </ToggleButton>
+            )}
           </ToggleButtonGroup>
 
           {/* Dropzone (upload mode) */}
@@ -264,6 +286,13 @@ export default function UploadScreen({
               so the shared "Deşifre et" submit works identically to an upload. */}
           {mode === "record" && (
             <VoiceRecorder onRecordingChange={setFile} disabled={submitting} />
+          )}
+
+          {/* Live transcription (stream mode). Self-contained: it opens a /stream
+              session, streams PCM, and on stop hands the finished result up via
+              onStreamComplete — no shared "Deşifre et" submit. */}
+          {mode === "stream" && onStreamComplete && (
+            <StreamingRecorder options={streamOptions} onComplete={onStreamComplete} />
           )}
 
           {fileError && (
@@ -386,32 +415,38 @@ export default function UploadScreen({
             </Collapse>
           </Box>
 
-          <Divider sx={{ my: 2 }} />
+          {/* The shared submit is for upload/record only — live transcription
+              (stream mode) completes itself and needs no "Deşifre et" button. */}
+          {mode !== "stream" && (
+            <>
+              <Divider sx={{ my: 2 }} />
 
-          {submitError && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {submitError}
-            </Alert>
+              {submitError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {submitError}
+                </Alert>
+              )}
+
+              <Button
+                variant="contained"
+                size="large"
+                fullWidth
+                disabled={!file || submitting}
+                onClick={handleSubmit}
+                startIcon={<GraphicEqRoundedIcon />}
+              >
+                {submitting ? "Başlatılıyor…" : "Deşifre et"}
+              </Button>
+
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 1.5, display: "block", textAlign: "center" }}
+              >
+                Yerel olarak CPU üzerinde çalışır — dakika başına ~50 sn bekleyin.
+              </Typography>
+            </>
           )}
-
-          <Button
-            variant="contained"
-            size="large"
-            fullWidth
-            disabled={!file || submitting}
-            onClick={handleSubmit}
-            startIcon={<GraphicEqRoundedIcon />}
-          >
-            {submitting ? "Başlatılıyor…" : "Deşifre et"}
-          </Button>
-
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ mt: 1.5, display: "block", textAlign: "center" }}
-          >
-            Yerel olarak CPU üzerinde çalışır — dakika başına ~50 sn bekleyin.
-          </Typography>
         </CardContent>
       </Card>
     </Stack>

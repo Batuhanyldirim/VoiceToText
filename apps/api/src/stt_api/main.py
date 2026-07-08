@@ -17,7 +17,8 @@ import warnings
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+import numpy as np
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from stt_core.progress import ProgressEvent
 from .jobs import JobManager
 from .notes import NoteJobManager
 from .store import NoteStore
+from .stream import StreamManager
 
 # --- Logging: surface our job/note lifecycle INFO lines, and quiet the known,
 # benign third-party warnings that otherwise fire on every job and bury the
@@ -65,6 +67,9 @@ app.add_middleware(
 )
 
 manager = JobManager(JOBS_ROOT)
+# Live (streaming) transcription sessions — same in-memory, process-scoped model
+# as JobManager (ADR-0012), scratch under the same git-ignored jobs root (ADR-0003).
+stream_manager = StreamManager(JOBS_ROOT)
 # Durable note history (SQLite, project-local, git-ignored — ADR-0003). The
 # worker persists completed notes here; the /notes history endpoints read it.
 note_store = NoteStore()
@@ -146,8 +151,12 @@ async def create_job(
 
 @app.get("/jobs")
 def list_jobs() -> dict:
-    """Active (queued/running/failed) transcriptions for the sidebar. Finished
-    jobs are excluded — their transcript is shown on the result screen."""
+    """Active (queued/running/failed) file/upload transcriptions for the sidebar.
+    Finished ones are excluded — their transcript is shown on the result screen.
+    NOTE: live streaming sessions are NOT listed here. They live in a separate
+    registry (stream_manager) and are driven end-to-end by the StreamingRecorder
+    component (which self-polls to completion), not by the job sidebar — routing
+    a stream id through the /jobs endpoints would 404. See ADR-0014."""
     return {"jobs": manager.list_active()}
 
 
@@ -221,6 +230,142 @@ def download(job_id: str, fmt: str):
     if not path.is_file():
         raise HTTPException(404, f"{fmt} not found")
     stem = Path(getattr(job, "original_name", "transcript")).stem or "transcript"
+    media = {"txt": "text/plain", "srt": "application/x-subrip", "json": "application/json"}[fmt]
+    return FileResponse(path, media_type=media, filename=f"{stem}.{fmt}")
+
+
+# ---------------------------------------------------------------------------
+# Live (streaming) transcription — transcribe WHILE recording (ADR-0014).
+# The browser captures raw PCM (AudioWorklet), downsamples to 16 kHz mono, and
+# streams it here as int16 frames. The server transcribes silence-cut chunks
+# incrementally and, on finish, runs ONE global diarization pass, returning a
+# normal TranscribeResult (so downloads / note generation / the viewer are
+# reused). Local-only: audio only ever reaches this 127.0.0.1 endpoint (REQ-128).
+# ---------------------------------------------------------------------------
+
+
+@app.post("/stream", status_code=201)
+async def open_stream(
+    language: Optional[str] = Form(None),
+    min_speakers: Optional[int] = Form(None),
+    max_speakers: Optional[int] = Form(None),
+    diarize: bool = Form(True),
+    model: str = Form("large-v3"),
+    name: str = Form("kayit"),
+) -> dict:
+    """Open a streaming session. Same HF_TOKEN gate as create_job (diarization
+    needs a server-side token; never accepted from the browser — REQ-096)."""
+    hf_token = os.environ.get("HF_TOKEN")
+    if diarize and not hf_token:
+        raise HTTPException(
+            400, "diarization requested but HF_TOKEN is not set on the server. "
+                 "Start the server after `source env.sh`, or send diarize=false."
+        )
+    # Streaming skips whole-file enhancement (REQ-131) — incremental chunks can't
+    # get the whole-file leveling pass; the batch record/upload path keeps it.
+    opts = TranscribeOptions(
+        model=model, language=language or None, diarize=diarize,
+        min_speakers=min_speakers, max_speakers=max_speakers,
+        enhance=False, hf_token=hf_token,
+    )
+    session = stream_manager.open(opts, original_name=name or "kayit")
+    return {"stream_id": session.id, "status": session.status}
+
+
+@app.post("/stream/{stream_id}/audio", status_code=202)
+async def stream_audio(stream_id: str, request: Request) -> dict:
+    """Append a raw PCM frame (little-endian int16 mono @ 16 kHz) as the request
+    body. Converted to float32 in [-1, 1] and handed to the session worker."""
+    raw = await request.body()
+    if not raw:
+        return {"ok": True, "samples": 0}
+    pcm = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if not stream_manager.append(stream_id, pcm):
+        raise HTTPException(404, "stream not found or not recording")
+    return {"ok": True, "samples": int(pcm.shape[0])}
+
+
+@app.post("/stream/{stream_id}/finish", status_code=202)
+async def finish_stream(stream_id: str) -> dict:
+    """Signal end-of-recording: the worker flushes the tail and runs the global
+    diarization pass, then publishes the result (poll GET /stream/{id})."""
+    session = stream_manager.finish(stream_id)
+    if not session:
+        raise HTTPException(404, "stream not found")
+    return {"stream_id": session.id, "status": session.status}
+
+
+@app.delete("/stream/{stream_id}", status_code=202)
+async def cancel_stream(stream_id: str) -> dict:
+    """Cancel/abandon a streaming session without finalizing — unblocks the worker
+    thread and frees its buffered audio + scratch dir. Called by the client when
+    the recorder is torn down without a finish (navigate away, unmount). Idempotent:
+    a already-gone session just returns cancelled=false."""
+    cancelled = stream_manager.cancel(stream_id)
+    return {"cancelled": cancelled}
+
+
+@app.get("/stream/{stream_id}")
+def get_stream(stream_id: str) -> dict:
+    session = stream_manager.get(stream_id)
+    if not session:
+        raise HTTPException(404, "stream not found")
+    return {
+        "stream_id": session.id,
+        "status": session.status,
+        "stage": session.stage,
+        "live_text": session.live_text,
+        "result": session.result,
+        "error": session.error,
+        "original_name": session.original_name,
+        "transcribe_seconds": session.transcribe_seconds,
+        "started_at": session.started_at,
+        "created_at": session.created_at,
+    }
+
+
+@app.get("/stream/{stream_id}/events")
+async def stream_events(stream_id: str):
+    session = stream_manager.get(stream_id)
+    if not session:
+        raise HTTPException(404, "stream not found")
+
+    async def stream():
+        # Late joiner: replay the transcript so far, then stream new deltas.
+        if session.live_text:
+            yield {"event": "transcribe", "data": json.dumps({"text": session.live_text})}
+        if session.status in ("done", "error"):
+            yield {"event": session.status, "data": json.dumps({"stage": session.stage})}
+            return
+        assert session.queue is not None
+        while True:
+            try:
+                event: ProgressEvent = await asyncio.wait_for(session.queue.get(), timeout=30)
+            except asyncio.TimeoutError:
+                yield {"event": "ping", "data": "keepalive"}
+                continue
+            payload = {"stage": event.stage}
+            # For "transcribe" events, `message` is the newly-appended text delta.
+            if event.stage == "transcribe" and event.message:
+                payload["delta"] = event.message
+            elif event.message:
+                payload["message"] = event.message
+            yield {"event": event.stage, "data": json.dumps(payload)}
+            if event.stage in ("done", "error"):
+                break
+
+    return EventSourceResponse(stream())
+
+
+@app.get("/stream/{stream_id}/download/{fmt}")
+def download_stream(stream_id: str, fmt: str):
+    if fmt not in ("txt", "srt", "json"):
+        raise HTTPException(400, "fmt must be txt, srt, or json")
+    path = stream_manager.download_path(stream_id, fmt)
+    if not path:
+        raise HTTPException(404, "result not ready")
+    session = stream_manager.get(stream_id)
+    stem = Path(getattr(session, "original_name", "kayit")).stem or "kayit"
     media = {"txt": "text/plain", "srt": "application/x-subrip", "json": "application/json"}[fmt]
     return FileResponse(path, media_type=media, filename=f"{stem}.{fmt}")
 

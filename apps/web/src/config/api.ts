@@ -6,6 +6,7 @@ import type {
   CreateJobResponse,
   CreateNoteBody,
   CreateNoteResponse,
+  CreateStreamResponse,
   DownloadFormat,
   HealthResponse,
   Job,
@@ -14,6 +15,7 @@ import type {
   NoteTemplatesResponse,
   ProvidersResponse,
   SavedNoteSummary,
+  StreamStatus,
   TranscriptInfo,
   TranscriptText,
 } from "../types";
@@ -96,6 +98,83 @@ export function jobEventsUrl(id: string): string {
 /** URL for a downloadable transcript in the given format. */
 export function downloadUrl(id: string, fmt: DownloadFormat): string {
   return `${API}/jobs/${encodeURIComponent(id)}/download/${fmt}`;
+}
+
+// ---------------------------------------------------------------------------
+// Live (streaming) transcription — transcribe WHILE recording (ADR-0014).
+// The recorder captures raw PCM and streams it here; the server transcribes
+// silence-cut chunks incrementally and diarizes once at finish.
+// ---------------------------------------------------------------------------
+
+/** Open a live transcription session. Options mirror createJob's. */
+export async function openStream(
+  options: JobOptions,
+  name: string,
+  signal?: AbortSignal,
+): Promise<CreateStreamResponse> {
+  const form = new FormData();
+  if (options.language && options.language.trim()) {
+    form.append("language", options.language.trim());
+  }
+  if (typeof options.min_speakers === "number") {
+    form.append("min_speakers", String(options.min_speakers));
+  }
+  if (typeof options.max_speakers === "number") {
+    form.append("max_speakers", String(options.max_speakers));
+  }
+  form.append("diarize", String(options.diarize));
+  form.append("model", options.model);
+  form.append("name", name);
+  const res = await fetch(`${API}/stream`, { method: "POST", body: form, signal });
+  return asJson<CreateStreamResponse>(res);
+}
+
+/** Append a raw PCM frame (little-endian int16 mono @ 16 kHz) to a session. */
+export async function sendStreamAudio(
+  id: string,
+  pcm: Int16Array,
+  signal?: AbortSignal,
+): Promise<void> {
+  // Copy the exact bytes for this frame into a fresh ArrayBuffer (the view may be
+  // a slice of a pooled/shared buffer; a plain ArrayBuffer is a valid BodyInit).
+  const body = new ArrayBuffer(pcm.byteLength);
+  new Int16Array(body).set(pcm);
+  await fetch(`${API}/stream/${encodeURIComponent(id)}/audio`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body,
+    signal,
+  });
+}
+
+/** Signal end-of-recording: the server flushes the tail + diarizes. */
+export async function finishStream(id: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${API}/stream/${encodeURIComponent(id)}/finish`, {
+    method: "POST",
+    signal,
+  });
+  await asJson<{ stream_id: string }>(res);
+}
+
+/** Abandon a session without finalizing (recorder torn down before finish) so the
+ *  server frees its worker + buffered audio. Best-effort — errors are ignored. */
+export async function cancelStream(id: string): Promise<void> {
+  try {
+    await fetch(`${API}/stream/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch {
+    /* best-effort cleanup */
+  }
+}
+
+/** Poll a session's status + growing transcript + final result. */
+export async function getStream(id: string, signal?: AbortSignal): Promise<StreamStatus> {
+  const res = await fetch(`${API}/stream/${encodeURIComponent(id)}`, { signal });
+  return asJson<StreamStatus>(res);
+}
+
+/** URL for the SSE stream of transcript deltas + stages. */
+export function streamEventsUrl(id: string): string {
+  return `${API}/stream/${encodeURIComponent(id)}/events`;
 }
 
 // ---------------------------------------------------------------------------

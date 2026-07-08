@@ -91,6 +91,26 @@ export interface HealthResponse {
 
 export type ModelName = "large-v3" | "small";
 
+/** POST /stream response — a live transcription session id. */
+export interface CreateStreamResponse {
+  stream_id: string;
+  status: string;
+}
+
+/** GET /stream/{id} — status + growing transcript + final result. */
+export interface StreamStatus {
+  stream_id: string;
+  status: "recording" | "finalizing" | "done" | "error";
+  stage: Stage | null;
+  live_text: string;
+  result: JobResult | null;
+  error: string | null;
+  original_name: string | null;
+  transcribe_seconds?: number | null;
+  started_at?: number | null;
+  created_at?: string | null;
+}
+
 export interface JobOptions {
   language?: string;
   min_speakers?: number;

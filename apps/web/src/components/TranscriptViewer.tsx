@@ -24,7 +24,7 @@ import RecordVoiceOverRoundedIcon from "@mui/icons-material/RecordVoiceOverRound
 import TranslateRoundedIcon from "@mui/icons-material/TranslateRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import type { DownloadFormat, JobResult } from "../types";
-import { downloadUrl } from "../config/api";
+import { API, downloadUrl } from "../config/api";
 import { formatTimestamp, isAudioFile, languageLabel } from "../utils/format";
 import TurnBubble from "./TurnBubble";
 
@@ -38,6 +38,10 @@ interface TranscriptViewerProps {
   file: File | null;
   onReset: () => void;
   onGenerateNote: () => void;
+  /** Which API resource serves the downloads. "jobs" (default) for uploads/
+   *  recordings; "stream" for a live-transcription result (downloads live at
+   *  /stream/{id}/download/... instead of /jobs/{id}/download/...). */
+  downloadSource?: "jobs" | "stream";
 }
 
 export default function TranscriptViewer({
@@ -46,6 +50,7 @@ export default function TranscriptViewer({
   file,
   onReset,
   onGenerateNote,
+  downloadSource = "jobs",
 }: TranscriptViewerProps) {
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
@@ -107,7 +112,10 @@ export default function TranscriptViewer({
 
   const handleDownload = (fmt: DownloadFormat) => {
     const a = document.createElement("a");
-    a.href = downloadUrl(jobId, fmt);
+    a.href =
+      downloadSource === "stream"
+        ? `${API}/stream/${encodeURIComponent(jobId)}/download/${fmt}`
+        : downloadUrl(jobId, fmt);
     a.download = "";
     document.body.appendChild(a);
     a.click();

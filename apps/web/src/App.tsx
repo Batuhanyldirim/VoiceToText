@@ -33,11 +33,16 @@ type View =
   | { screen: "upload" }
   | { screen: "progress"; jobId: string }
   | { screen: "result"; jobId: string; result: JobResult }
+  // A finished LIVE (streaming) transcription. Same viewer as "result", but
+  // downloads come from /stream/{id} instead of /jobs/{id} (ADR-0014).
+  | { screen: "stream-result"; streamId: string; result: JobResult }
   | {
       screen: "note-setup";
       jobId: string;
       result: JobResult;
       transcript: string;
+      // Where the transcript came from — drives download URLs and back-nav.
+      source?: "jobs" | "stream";
     }
   | {
       screen: "note-stream";
@@ -45,6 +50,7 @@ type View =
       result: JobResult;
       transcript: string;
       noteId: string;
+      source?: "jobs" | "stream";
     }
   // Note source-picker for a brand-new note (reuse an existing transcript, or
   // route to the upload flow). Not tied to a transcription job.
@@ -72,7 +78,13 @@ function viewToPersisted(view: View, fileName: string | null): PersistedView | n
     case "result":
       return { screen: "result", jobId: view.jobId, fileName };
     case "note-stream":
-      return { screen: "note-stream", jobId: view.jobId, fileName, noteId: view.noteId };
+      return {
+        screen: "note-stream",
+        jobId: view.jobId,
+        fileName,
+        noteId: view.noteId,
+        source: view.source,
+      };
     case "note-source":
       return { screen: "note-source" };
     case "note-stream-fresh":
@@ -139,6 +151,14 @@ export default function App() {
             return;
           case "result":
           case "note-stream": {
+            // A note started from a live stream has NO /jobs job (getJob would
+            // 404) and no server-persisted result; the note itself is reattachable
+            // by id (live via SSE, or from saved history), so restore it as a
+            // standalone note view instead of re-fetching a transcript.
+            if (saved.screen === "note-stream" && saved.source === "stream") {
+              setView({ screen: "note-stream-fresh", noteId: saved.noteId });
+              return;
+            }
             // These need the finished JobResult back — re-fetch it.
             setFileName(saved.fileName);
             const job = await getJob(saved.jobId);
@@ -219,6 +239,17 @@ export default function App() {
     setView({ screen: "upload" });
   }, []);
 
+  // Live transcription finished → show its result in the transcript viewer.
+  const handleStreamComplete = useCallback(
+    (streamId: string, result: JobResult, name: string) => {
+      setFile(null);
+      setFileName(name);
+      setView({ screen: "stream-result", streamId, result });
+      bumpNotes(); // drop its active row from the sidebar
+    },
+    [bumpNotes],
+  );
+
   // Start a brand-new note from the source picker (reuse an existing transcript
   // or route to upload). Reachable from the sidebar and the upload screen.
   const handleNewNote = useCallback(() => {
@@ -230,18 +261,31 @@ export default function App() {
     setView({ screen: "note-saved", noteId: id });
   }, []);
 
-  // Transcript result → clinical note setup.
+  // Transcript result → clinical note setup. Works for both a normal job result
+  // and a live-transcription (stream) result — the note flow only needs the
+  // transcript text + result, not where the transcript came from.
   const handleGenerateNote = useCallback(() => {
-    setView((v) =>
-      v.screen === "result"
-        ? {
-            screen: "note-setup",
-            jobId: v.jobId,
-            result: v.result,
-            transcript: transcriptToText(v.result),
-          }
-        : v,
-    );
+    setView((v) => {
+      if (v.screen === "result") {
+        return {
+          screen: "note-setup",
+          jobId: v.jobId,
+          result: v.result,
+          transcript: transcriptToText(v.result),
+          source: "jobs",
+        };
+      }
+      if (v.screen === "stream-result") {
+        return {
+          screen: "note-setup",
+          jobId: v.streamId,
+          result: v.result,
+          transcript: transcriptToText(v.result),
+          source: "stream",
+        };
+      }
+      return v;
+    });
   }, []);
 
   // Note setup (from a transcription job) → live token stream.
@@ -254,6 +298,7 @@ export default function App() {
             result: v.result,
             transcript: v.transcript,
             noteId,
+            source: v.source,
           }
         : v,
     );
@@ -277,13 +322,16 @@ export default function App() {
     setView({ screen: "note-stream-fresh", noteId });
   }, []);
 
-  // Back from note flow → the transcript result screen.
+  // Back from note flow → the transcript result screen. Return to the stream
+  // result viewer (not the /jobs one) when the transcript came from a live
+  // stream, so its downloads keep hitting /stream/{id} (not a 404 /jobs/{id}).
   const handleBackToTranscript = useCallback(() => {
-    setView((v) =>
-      v.screen === "note-setup" || v.screen === "note-stream"
-        ? { screen: "result", jobId: v.jobId, result: v.result }
-        : v,
-    );
+    setView((v) => {
+      if (v.screen !== "note-setup" && v.screen !== "note-stream") return v;
+      return v.source === "stream"
+        ? { screen: "stream-result", streamId: v.jobId, result: v.result }
+        : { screen: "result", jobId: v.jobId, result: v.result };
+    });
   }, []);
 
   const handleBackToNoteSetup = useCallback(() => {
@@ -294,6 +342,7 @@ export default function App() {
             jobId: v.jobId,
             result: v.result,
             transcript: v.transcript,
+            source: v.source,
           }
         : v,
     );
@@ -395,6 +444,7 @@ export default function App() {
                 submitting={submitting}
                 submitError={submitError}
                 onUseExisting={handleNewNote}
+                onStreamComplete={handleStreamComplete}
               />
             )}
             {view.screen === "progress" && (
@@ -410,6 +460,16 @@ export default function App() {
                 jobId={view.jobId}
                 result={view.result}
                 file={file}
+                onReset={handleReset}
+                onGenerateNote={handleGenerateNote}
+              />
+            )}
+            {view.screen === "stream-result" && (
+              <TranscriptViewer
+                jobId={view.streamId}
+                result={view.result}
+                file={null}
+                downloadSource="stream"
                 onReset={handleReset}
                 onGenerateNote={handleGenerateNote}
               />
