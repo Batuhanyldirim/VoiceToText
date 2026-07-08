@@ -335,6 +335,7 @@ with recording length.
 
 | You want to… | Read |
 |---|---|
+| See the full, current **feature list** + the voice→text→note flow | [`specs/FEATURES.md`](specs/FEATURES.md) |
 | Understand the product & who it's for | [`specs/product.md`](specs/product.md) |
 | Understand the stack, pins, constraints | [`specs/tech.md`](specs/tech.md) |
 | Find which package/module owns a pipeline stage | [`specs/structure.md`](specs/structure.md) |
@@ -351,30 +352,18 @@ with recording length.
 
 ## Shipped features
 
-- **Clinical note generation** — turn a transcript into a structured **Turkish**
-  clinical **note draft** via a **pluggable AI provider** (local Ollama by
-  default, Claude opt-in; PHI stays local). Pure logic in
-  [`packages/note-core`](packages/note-core); API note endpoints + web note
-  screens on top. Full plan, operational knowledge, and the clinical prompt are in
-  [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md);
-  the decision is [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
-  (REQ-100–106).
-- **Transcript reuse + persistent history** — generate notes from existing `out/`
-  transcripts (`GET /transcripts`) instead of re-uploading, and browse completed
-  notes saved to a project-local, git-ignored SQLite DB (`GET`/`DELETE /notes`,
-  `apps/api/notes.db`). → [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)
-  (REQ-107–110).
-- **Selectable provider + plugin seam** — pick provider/model in the UI (hidden
-  when one provider); operator allowlist (`STT_NOTE_PROVIDERS`) over a generic seam;
-  git-ignored `_local_providers` + `env.local.sh` for machine-specific/off-device
-  backends; committed repo ships only Ollama. Includes the **note-output reshape**
-  (chosen template IS the note). → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)
-  (REQ-111–114).
-- **Timing metrics + sessions sidebar** — `transcribe_seconds`/`note_seconds` chips
-  + refresh-safe live timer (anchored to `started_at`); the "Oturumlar" sidebar
-  shows active work (returnable, retryable via `POST /jobs|notes/{id}/retry`,
-  refresh-safe) above saved notes. Active jobs are in-memory (die on restart).
-  → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md) (REQ-115–119).
+**The authoritative, always-current feature list is [`specs/FEATURES.md`](specs/FEATURES.md)** —
+read it to understand the whole product (the voice→text→note→record flow and every
+shipped feature, each linked to its ADR + REQ). Keep it up to date as features land.
+
+In brief: speaker-diarized **transcription** (upload / in-app recording / live
+streaming), **Turkish clinical note generation** via a pluggable local-first LLM
+(the chosen template IS the note + a "Klinik İnceleme Gerekli" review section),
+**editable + finalizable** notes with **autosave/version history**, **custom
+templates**, **problem/medication extraction** (in the same generation call),
+**audio-linked source transcript** (click a turn to hear it), **export** (PDF /
+EHR copy), **patients** (list + per-patient page with a problem/med rollup),
+**encounter metadata** + **search**, a **Home dashboard**, and **URL routing**.
 
 ## How to add a feature (the spec-driven loop)
 
