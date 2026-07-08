@@ -51,6 +51,9 @@ class SavedNote:
     # Source transcript turns as a JSON string [{speaker,text,start,end}] (ADR-0019).
     # NULL for notes made before this feature / from plain-text-only transcripts.
     transcript_json: Optional[str] = None
+    # Encounter metadata captured up front (ADR-0022). Both optional/free-text.
+    visit_type: Optional[str] = None
+    chief_complaint: Optional[str] = None
 
     @property
     def effective_note(self) -> str:
@@ -89,6 +92,8 @@ class SavedNote:
             "finalized_at": self.finalized_at,
             "edited": self.edited,
             "patient_id": self.patient_id,
+            "visit_type": self.visit_type,
+            "chief_complaint": self.chief_complaint,
         }
 
     def to_dict(self) -> dict:
@@ -184,6 +189,11 @@ class NoteStore:
             # Audio-linked source transcript (ADR-0019): the turns as JSON.
             if "transcript_json" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN transcript_json TEXT")
+            # Encounter metadata (ADR-0022): visit type + chief complaint.
+            if "visit_type" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN visit_type TEXT")
+            if "chief_complaint" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN chief_complaint TEXT")
             # Version history (ADR-0020): a snapshot of each prior note body.
             conn.execute(
                 """
@@ -219,14 +229,15 @@ class NoteStore:
                 INSERT OR REPLACE INTO notes
                     (id, created_at, title, source_name, provider, model, template,
                      transcript, note, transcribe_seconds, note_seconds,
-                     edited_note, status, finalized_at, patient_id, transcript_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     edited_note, status, finalized_at, patient_id, transcript_json,
+                     visit_type, chief_complaint)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
                  note.transcribe_seconds, note.note_seconds,
                  note.edited_note, note.status, note.finalized_at, note.patient_id,
-                 note.transcript_json),
+                 note.transcript_json, note.visit_type, note.chief_complaint),
             )
 
     def list(self, patient_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
@@ -237,7 +248,8 @@ class NoteStore:
         sql = (
             "SELECT n.id, n.created_at, n.title, n.source_name, n.provider, n.model, "
             "n.template, n.transcribe_seconds, n.note_seconds, n.edited_note, "
-            "n.status, n.finalized_at, n.patient_id, p.name AS patient_name "
+            "n.status, n.finalized_at, n.patient_id, n.visit_type, n.chief_complaint, "
+            "p.name AS patient_name "
             "FROM notes n LEFT JOIN patients p ON p.id = n.patient_id "
         )
         clauses: list = []
@@ -248,11 +260,14 @@ class NoteStore:
         q = (q or "").strip()
         if q:
             like = f"%{q.lower()}%"
+            # Match title, patient, effective body, chief complaint, visit type.
             clauses.append(
                 "(lower(n.title) LIKE ? OR lower(COALESCE(p.name,'')) LIKE ? "
-                "OR lower(COALESCE(n.edited_note, n.note)) LIKE ?)"
+                "OR lower(COALESCE(n.edited_note, n.note)) LIKE ? "
+                "OR lower(COALESCE(n.chief_complaint,'')) LIKE ? "
+                "OR lower(COALESCE(n.visit_type,'')) LIKE ?)"
             )
-            params.extend([like, like, like])
+            params.extend([like, like, like, like, like])
         if clauses:
             sql += "WHERE " + " AND ".join(clauses) + " "
         sql += "ORDER BY n.created_at DESC"
@@ -278,6 +293,8 @@ class NoteStore:
                 "edited": d["edited_note"] is not None,
                 "patient_id": d["patient_id"],
                 "patient_name": d["patient_name"],
+                "visit_type": d["visit_type"],
+                "chief_complaint": d["chief_complaint"],
             })
         return out
 

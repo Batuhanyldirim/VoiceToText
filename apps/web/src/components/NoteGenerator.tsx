@@ -26,15 +26,18 @@ import type {
   CreateNoteBody,
   NoteTemplate,
   ProviderInfo,
+  Patient,
   TranscriptInfo,
   Turn,
 } from "../types";
 import {
   createNote,
+  createPatient,
   getNoteTemplates,
   getProviders,
   getTranscript,
   getTranscripts,
+  listPatients,
 } from "../config/api";
 import { languageLabel } from "../utils/format";
 
@@ -126,6 +129,14 @@ export default function NoteGenerator({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Encounter metadata captured up front (ADR-0022): patient, visit type, chief
+  // complaint. All optional — the fast path is still one click.
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientId, setPatientId] = useState<string>("");
+  const [newPatientName, setNewPatientName] = useState<string>("");
+  const [visitType, setVisitType] = useState<string>("");
+  const [chiefComplaint, setChiefComplaint] = useState<string>("");
+
   // Source-picker state (reuse mode only).
   const [sourceMode, setSourceMode] = useState<SourceMode>("reuse");
   const [transcripts, setTranscripts] = useState<TranscriptInfo[]>([]);
@@ -147,10 +158,12 @@ export default function NoteGenerator({
     let cancelled = false;
     (async () => {
       try {
-        const [tpl, prov] = await Promise.all([
+        const [tpl, prov, pats] = await Promise.all([
           getNoteTemplates(abort.signal),
           getProviders(abort.signal),
+          listPatients(abort.signal).catch(() => [] as Patient[]),
         ]);
+        if (!cancelled) setPatients(pats);
         if (cancelled) return;
         setTemplates(tpl.templates ?? []);
         if (tpl.templates?.length) setTemplate(tpl.templates[0].key);
@@ -271,13 +284,12 @@ export default function NoteGenerator({
   const handleGenerate = useCallback(async () => {
     setSubmitting(true);
     setSubmitError(null);
-    const label = activeChoice?.label ?? template;
-    const title = effectiveSource ? `${effectiveSource} — ${label}` : label;
     const body: CreateNoteBody = {
       transcript: effectiveTranscript,
       template,
-      title,
       provider,
+      // No explicit title → the server auto-titles from the chief complaint (or
+      // source name) + template label (ADR-0022, REQ-154).
     };
     if (model) body.model = model;
     if (effectiveSource) body.source_name = effectiveSource;
@@ -287,7 +299,18 @@ export default function NoteGenerator({
     // transcription flow (preloaded); reused out/ transcripts have no live audio.
     if (turns && turns.length > 0) body.transcript_json = turns;
     if (audioSourceId) body.audio_source_id = audioSourceId;
+    // Encounter metadata (ADR-0022) — all optional.
+    if (visitType.trim()) body.visit_type = visitType.trim();
+    if (chiefComplaint.trim()) body.chief_complaint = chiefComplaint.trim();
     try {
+      // Resolve the patient: an explicit selection, or create one from a typed
+      // new name (reused-by-name server-side).
+      let pid = patientId;
+      if (!pid && newPatientName.trim()) {
+        const p = await createPatient(newPatientName.trim());
+        pid = p.id;
+      }
+      if (pid) body.patient_id = pid;
       const { note_id } = await createNote(body);
       onGenerating(note_id);
     } catch (e) {
@@ -304,13 +327,16 @@ export default function NoteGenerator({
     effectiveSource,
     effectiveSeconds,
     template,
-    activeChoice,
     isFree,
     templateText,
     provider,
     model,
     turns,
     audioSourceId,
+    visitType,
+    chiefComplaint,
+    patientId,
+    newPatientName,
     onGenerating,
   ]);
 
@@ -462,6 +488,76 @@ export default function NoteGenerator({
                 provider}) — deşifre metni bu makinede kalır.
               </Alert>
             )}
+
+            {/* Encounter metadata captured up front (ADR-0022) — all optional. */}
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+              Muayene bilgisi <Typography component="span" variant="caption" color="text.secondary">(isteğe bağlı)</Typography>
+            </Typography>
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                {patients.length > 0 ? (
+                  <TextField
+                    select
+                    label="Hasta"
+                    value={patientId}
+                    onChange={(e) => setPatientId(e.target.value)}
+                    fullWidth
+                    size="small"
+                    disabled={loading}
+                    helperText={patientId ? " " : "İsteğe bağlı — daha sonra da atanabilir"}
+                  >
+                    <MenuItem value="">— Hasta seçilmedi —</MenuItem>
+                    {patients.map((p) => (
+                      <MenuItem key={p.id} value={p.id}>
+                        {p.name}
+                        {p.mrn ? ` (${p.mrn})` : ""}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : (
+                  <TextField
+                    label="Hasta adı"
+                    value={newPatientName}
+                    onChange={(e) => setNewPatientName(e.target.value)}
+                    fullWidth
+                    size="small"
+                    disabled={loading}
+                    helperText="Yeni hasta oluşturulur (isteğe bağlı)"
+                  />
+                )}
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Muayene türü"
+                  value={visitType}
+                  onChange={(e) => setVisitType(e.target.value)}
+                  fullWidth
+                  size="small"
+                  disabled={loading}
+                  placeholder="örn. Kontrol"
+                  slotProps={{ htmlInput: { list: "visit-type-presets" } }}
+                />
+                <datalist id="visit-type-presets">
+                  <option value="İlk başvuru" />
+                  <option value="Kontrol" />
+                  <option value="Konsültasyon" />
+                  <option value="Acil" />
+                  <option value="Telefon" />
+                </datalist>
+              </Grid>
+              <Grid size={12}>
+                <TextField
+                  label="Ana yakınma"
+                  value={chiefComplaint}
+                  onChange={(e) => setChiefComplaint(e.target.value)}
+                  fullWidth
+                  size="small"
+                  disabled={loading}
+                  placeholder="örn. Öksürük"
+                  helperText="Not başlığında kullanılır ve aramada eşleşir"
+                />
+              </Grid>
+            </Grid>
 
             <Grid container spacing={2}>
               {/* Provider selector — hidden when only one provider is offered

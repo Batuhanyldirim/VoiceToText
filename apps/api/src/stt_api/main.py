@@ -477,6 +477,10 @@ class NoteRequest(BaseModel):
     # to copy into the durable store. Both optional (reused transcripts have neither).
     transcript_json: Optional[list] = None
     audio_source_id: Optional[str] = None
+    # Encounter metadata captured up front (ADR-0022) — all optional.
+    patient_id: Optional[str] = None
+    visit_type: Optional[str] = None
+    chief_complaint: Optional[str] = None
 
 
 @app.get("/notes")
@@ -624,6 +628,9 @@ async def create_note(body: NoteRequest) -> dict:
         transcribe_seconds=body.transcribe_seconds,
         transcript_json=transcript_json,
         audio_source_id=body.audio_source_id,
+        patient_id=body.patient_id,
+        visit_type=body.visit_type,
+        chief_complaint=body.chief_complaint,
     )
     note_manager.submit(job)
     return {"note_id": job.id, "status": job.status}
@@ -658,6 +665,9 @@ def _saved_note_response(saved) -> dict:
         "finalized_at": saved.finalized_at,
         "patient_id": saved.patient_id,
         "patient_name": note_store.patient_name(saved.patient_id),
+        # Encounter metadata (ADR-0022).
+        "visit_type": saved.visit_type,
+        "chief_complaint": saved.chief_complaint,
         # Audio-linked source transcript (ADR-0019): the turns + whether the
         # source recording is available at GET /notes/{id}/audio.
         "turns": saved.turns,

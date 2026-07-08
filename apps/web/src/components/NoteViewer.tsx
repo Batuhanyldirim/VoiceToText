@@ -140,6 +140,9 @@ export default function NoteViewer({
   // Source transcript turns + whether the recording is available (ADR-0019).
   const [turns, setTurns] = useState<Turn[]>([]);
   const [hasAudio, setHasAudio] = useState(false);
+  // Encounter metadata (ADR-0022).
+  const [visitType, setVisitType] = useState<string | null>(null);
+  const [chiefComplaint, setChiefComplaint] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -192,6 +195,8 @@ export default function NoteViewer({
       setPatientName(job.patient_name ?? null);
       if (Array.isArray(job.turns)) setTurns(job.turns);
       setHasAudio(Boolean(job.has_audio));
+      setVisitType(job.visit_type ?? null);
+      setChiefComplaint(job.chief_complaint ?? null);
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -586,6 +591,17 @@ export default function NoteViewer({
                   size="small"
                   variant="outlined"
                   color="info"
+                />
+              )}
+              {isDone && visitType && (
+                <Chip label={visitType} size="small" variant="outlined" />
+              )}
+              {isDone && chiefComplaint && (
+                <Chip
+                  label={chiefComplaint}
+                  size="small"
+                  variant="outlined"
+                  color="primary"
                 />
               )}
               {isDone && transcribeSeconds != null && (

@@ -167,6 +167,24 @@ def test_search_blank_returns_all(store):
     assert len(store.list(q="   ")) == 2
 
 
+# --- encounter metadata (ADR-0022) ------------------------------------------
+
+def test_encounter_metadata_persists_and_lists(store):
+    make_saved_note(store, "n1", visit_type="Kontrol", chief_complaint="öksürük")
+    n = store.get("n1")
+    assert n.visit_type == "Kontrol" and n.chief_complaint == "öksürük"
+    row = next(r for r in store.list() if r["id"] == "n1")
+    assert row["visit_type"] == "Kontrol" and row["chief_complaint"] == "öksürük"
+
+
+def test_search_matches_chief_complaint_and_visit_type(store):
+    make_saved_note(store, "n1", note="body", chief_complaint="öksürük", visit_type="Kontrol")
+    make_saved_note(store, "n2", note="body", chief_complaint="baş ağrısı", visit_type="Acil")
+    assert {r["id"] for r in store.list(q="öksürük")} == {"n1"}   # chief complaint
+    assert {r["id"] for r in store.list(q="acil")} == {"n2"}       # visit type
+    assert {r["id"] for r in store.list(q="ağrı")} == {"n2"}       # chief complaint substring
+
+
 # --- custom note templates (ADR-0021) --------------------------------------
 
 def test_template_crud(store):

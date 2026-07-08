@@ -466,6 +466,25 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## Encounter metadata (Tier 2)
+
+Capture a little structured context **up front** at note creation — the patient,
+the visit type, and the chief complaint — so notes are sensibly titled and easy to
+find later. *(→ ADR-0022, ADR-0016, ADR-0018)*
+
+- **REQ-153** (Event) — WHEN the user generates a note, THE SYSTEM SHALL accept
+  optional **patient** (assign up front), **visit type** (e.g. İlk başvuru,
+  Kontrol, Konsültasyon, or free text), and **chief complaint** on `POST /notes`,
+  persist them on the note, and surface them on `GET /notes/{id}` and the note
+  list. *(→ ADR-0022, ADR-0016)*
+- **REQ-154** (Event) — WHEN a chief complaint is provided, THE SYSTEM SHALL use
+  it in the note's **auto-title** (so the sidebar row is meaningful, e.g.
+  "Öksürük — SOAP notu") unless the user supplied an explicit title. *(→ ADR-0022)*
+- **REQ-155** (Event) — WHEN the user searches notes, THE SYSTEM SHALL also match
+  the **chief complaint** and **visit type** (in addition to title/patient/body),
+  and the web UI SHALL let the user enter this metadata in the note generator and
+  see it on the note (visit type + chief complaint chips). *(→ ADR-0022, ADR-0018)*
+
 ## Custom note templates (Tier 2)
 
 Beyond the built-in SOAP / Ö&M formats, the user can save their own reusable note

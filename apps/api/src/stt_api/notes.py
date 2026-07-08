@@ -59,6 +59,10 @@ class NoteJob:
     # the originating job/stream id whose on-disk audio we copy at persist time.
     transcript_json: Optional[str] = None
     audio_source_id: Optional[str] = None
+    # Encounter metadata (ADR-0022).
+    patient_id: Optional[str] = None
+    visit_type: Optional[str] = None
+    chief_complaint: Optional[str] = None
     created_at: str = ""             # UTC ISO-8601, set at registration
     started_at: Optional[float] = None  # epoch seconds at _run start (anchors the UI timer)
     # asyncio primitives, set when the job is submitted (bound to the running loop)
@@ -136,11 +140,16 @@ class NoteJobManager:
         transcribe_seconds: Optional[float] = None,
         transcript_json: Optional[str] = None,
         audio_source_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        visit_type: Optional[str] = None,
+        chief_complaint: Optional[str] = None,
     ) -> NoteJob:
         note_id = uuid.uuid4().hex[:12]
         if not title:
-            # Prefer the human template label ("SOAP notu"), fall back to the key.
-            title = f"{source_name or 'Not'} — {_template_label(opts.template)}"
+            # Auto-title (ADR-0022): lead with the chief complaint when present,
+            # else the source name; always suffixed with the template label.
+            lead = (chief_complaint or "").strip() or source_name or "Not"
+            title = f"{lead} — {_template_label(opts.template)}"
         job = NoteJob(
             id=note_id,
             transcript=transcript,
@@ -150,6 +159,9 @@ class NoteJobManager:
             transcribe_seconds=transcribe_seconds,
             transcript_json=transcript_json,
             audio_source_id=audio_source_id,
+            patient_id=patient_id,
+            visit_type=(visit_type or "").strip() or None,
+            chief_complaint=(chief_complaint or "").strip() or None,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[note_id] = job
@@ -229,7 +241,15 @@ class NoteJobManager:
                 transcribe_seconds=job.transcribe_seconds,
                 note_seconds=job.note_seconds,
                 transcript_json=job.transcript_json,
+                visit_type=job.visit_type,
+                chief_complaint=job.chief_complaint,
             ))
+            # Assign the patient up front, if one was chosen (ADR-0022/0016).
+            if job.patient_id:
+                try:
+                    self._store.set_note_patient(job.id, job.patient_id)
+                except Exception:  # noqa: BLE001 - bad/removed patient must not fail
+                    log.warning("note %s: could not assign patient %s", job.id, job.patient_id)
             log.info("note %s PERSISTED to store", job.id)
         except Exception as e:  # noqa: BLE001 - persistence must not kill the job
             log.warning("note %s persist FAILED: %s: %s", job.id, type(e).__name__, e)
