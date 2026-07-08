@@ -47,3 +47,11 @@ apps/api/notes.db
 *.db
 *.db-journal
 *.db-wal
+
+# ─── Machine-local, non-committed integrations ────────────────────────────
+# Optional local note-provider plugin + its enablement. Kept out of git so the
+# committed repo offers only the local (Ollama) provider and carries no
+# machine-specific integration code.
+env.local.sh
+README.local.md
+packages/note-core/src/note_core/_local_providers.py

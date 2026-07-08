@@ -70,6 +70,7 @@ SQLite DB. → [ADR-0010](../../specs/adr/0010-persistent-notes-sqlite.md).
 | `GET /transcripts` | List existing CLI transcripts under `out/` (`out/*.json`) available for reuse. |
 | `GET /transcripts/{name}` | Return a chosen transcript's text (e.g. `HistoryTaking_YA`) to feed straight into `POST /notes`. |
 | `GET /notes` | **History**: saved notes newest-first as summaries (`id, created_at, title, source_name, provider, model, template`) — no transcript/note bodies. |
+| `GET /notes/providers` | Providers the UI may offer (`{key, label, models, default_model, off_device}`) + `default_provider`. Gated by `STT_NOTE_PROVIDERS` (default `ollama`) and each provider's availability. `off_device: true` drives the UI's PHI warning. |
 | `DELETE /notes/{id}` | Delete a saved note from the store. |
 
 Completed notes are saved to **`apps/api/notes.db`** (stdlib `sqlite3`, override
@@ -86,6 +87,15 @@ server env, never accepted from the browser, logged, or returned. The default
 local model is `qwen2.5:32b-instruct` (start `ollama serve` in a shell that
 sourced `env.sh` so `OLLAMA_MODELS` is honored). Install the cloud SDK with
 `uv sync --extra claude`.
+
+**Provider plugin seam.** `note_core` exposes `list_providers()` and a small
+optional loader (`_local_registry()`): a deployment can add extra,
+machine-specific providers by dropping a `_local_providers.py` next to
+`providers.py` (with `PROVIDERS`/`DESCRIPTORS`) and enabling them via
+`STT_NOTE_PROVIDERS`. Each is filtered by an `available()` predicate, so a
+provider that can't run on a given machine never appears. If the module is
+absent, only the built-ins exist — the committed default is Ollama-only. This
+keeps environment-specific integrations out of version control.
 
 ## How it works
 

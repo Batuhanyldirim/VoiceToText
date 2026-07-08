@@ -13,7 +13,7 @@ See specs/ (ADR-0009, REQ-100+) for the contract and the PHI rationale.
 from .generate import EmptyTranscriptError, generate
 from .models import NoteOptions, NoteResult
 from .progress import STAGES, NoteEvent
-from .providers import ProviderError
+from .providers import ProviderError, list_providers
 from .templates import TEMPLATE_CHOICES
 
 __all__ = [
@@ -25,4 +25,5 @@ __all__ = [
     "TEMPLATE_CHOICES",
     "ProviderError",
     "EmptyTranscriptError",
+    "list_providers",
 ]

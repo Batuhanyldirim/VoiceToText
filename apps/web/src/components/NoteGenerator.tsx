@@ -23,11 +23,13 @@ import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
 import type {
   CreateNoteBody,
   NoteTemplate,
+  ProviderInfo,
   TranscriptInfo,
 } from "../types";
 import {
   createNote,
   getNoteTemplates,
+  getProviders,
   getTranscript,
   getTranscripts,
 } from "../config/api";
@@ -80,10 +82,14 @@ export default function NoteGenerator({
   const preloaded = typeof transcript === "string";
 
   const [templates, setTemplates] = useState<NoteTemplate[]>([]);
-  const [provider, setProvider] = useState<string>("ollama");
-  const [cloudEnabled, setCloudEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Providers (Ollama, and any enabled local plugin like Opus 4.8). The selected
+  // provider + model are sent to POST /notes; `off_device` drives the PHI warning.
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [provider, setProvider] = useState<string>("ollama");
+  const [model, setModel] = useState<string>("");
 
   const [template, setTemplate] = useState<string>("soap");
   const [templateText, setTemplateText] = useState("");
@@ -109,18 +115,28 @@ export default function NoteGenerator({
     let cancelled = false;
     (async () => {
       try {
-        const res = await getNoteTemplates(abort.signal);
+        const [tpl, prov] = await Promise.all([
+          getNoteTemplates(abort.signal),
+          getProviders(abort.signal),
+        ]);
         if (cancelled) return;
-        setTemplates(res.templates ?? []);
-        setProvider(res.provider);
-        setCloudEnabled(res.cloud_enabled);
-        if (res.templates?.length) setTemplate(res.templates[0].key);
+        setTemplates(tpl.templates ?? []);
+        if (tpl.templates?.length) setTemplate(tpl.templates[0].key);
+        setProviders(prov.providers ?? []);
+        // Default to the server's default provider (falls back to the first).
+        const def =
+          prov.providers.find((p) => p.key === prov.default_provider) ??
+          prov.providers[0];
+        if (def) {
+          setProvider(def.key);
+          setModel(def.default_model ?? def.models[0]?.id ?? "");
+        }
       } catch (e) {
         if (!cancelled) {
           setLoadError(
             e instanceof Error
               ? e.message
-              : "Not şablonları yüklenemedi. Servis çalışıyor mu?",
+              : "Not seçenekleri yüklenemedi. Servis çalışıyor mu?",
           );
         }
       } finally {
@@ -132,6 +148,22 @@ export default function NoteGenerator({
       abort.abort();
     };
   }, []);
+
+  // The currently-selected provider descriptor + its cloud/off-device flag.
+  const activeProvider = useMemo(
+    () => providers.find((p) => p.key === provider) ?? null,
+    [providers, provider],
+  );
+  const isCloud = activeProvider?.off_device ?? false;
+  // Keep the model valid when the provider changes.
+  const handleProviderChange = useCallback(
+    (key: string) => {
+      setProvider(key);
+      const p = providers.find((x) => x.key === key);
+      setModel(p?.default_model ?? p?.models[0]?.id ?? "");
+    },
+    [providers],
+  );
 
   // In reuse mode, load the list of existing transcripts up front.
   useEffect(() => {
@@ -201,7 +233,6 @@ export default function NoteGenerator({
   );
 
   const isFree = template === "free";
-  const isCloud = cloudEnabled || provider === "claude";
 
   const handleGenerate = useCallback(async () => {
     setSubmitting(true);
@@ -212,7 +243,9 @@ export default function NoteGenerator({
       transcript: effectiveTranscript,
       template,
       title,
+      provider,
     };
+    if (model) body.model = model;
     if (effectiveSource) body.source_name = effectiveSource;
     if (isFree) body.template_text = templateText;
     try {
@@ -234,6 +267,8 @@ export default function NoteGenerator({
     activeChoice,
     isFree,
     templateText,
+    provider,
+    model,
     onGenerating,
   ]);
 
@@ -370,9 +405,10 @@ export default function NoteGenerator({
 
             {isCloud ? (
               <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-                ⚠️ Bulut sağlayıcı etkin — deşifre metni Anthropic'e gönderilecek.
-                Yalnızca yetkilendirilmiş (BAA / kimliksizleştirilmiş / onamlı)
-                veriyle kullanın.
+                ⚠️ Cihaz dışı sağlayıcı seçili — deşifre metni bu makineden
+                ayrılıp modele (Bedrock/Anthropic) gönderilecek. Yalnızca
+                yetkilendirilmiş (BAA / kimliksizleştirilmiş / onamlı) veriyle
+                kullanın.
               </Alert>
             ) : (
               <Alert
@@ -380,12 +416,58 @@ export default function NoteGenerator({
                 icon={<LockRoundedIcon fontSize="inherit" />}
                 sx={{ mb: 2 }}
               >
-                Not üretimi yerel olarak çalışıyor ({provider}) — deşifre metni bu
-                makinede kalır.
+                Not üretimi yerel olarak çalışıyor ({activeProvider?.label ??
+                provider}) — deşifre metni bu makinede kalır.
               </Alert>
             )}
 
             <Grid container spacing={2}>
+              {/* Provider selector — hidden when only one provider is offered
+                  (committed default → just Ollama, UI unchanged). */}
+              {providers.length > 1 && (
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    select
+                    label="Sağlayıcı"
+                    value={provider}
+                    onChange={(e) => handleProviderChange(e.target.value)}
+                    fullWidth
+                    size="small"
+                    disabled={loading}
+                    helperText={
+                      isCloud ? "Cihaz dışı" : "Yerel — makinede kalır"
+                    }
+                  >
+                    {providers.map((p) => (
+                      <MenuItem key={p.key} value={p.key}>
+                        {p.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+              )}
+
+              {/* Model selector — only when the chosen provider offers >1 model. */}
+              {(activeProvider?.models.length ?? 0) > 1 && (
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    select
+                    label="Model"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    fullWidth
+                    size="small"
+                    disabled={loading}
+                  >
+                    {activeProvider?.models.map((m) => (
+                      <MenuItem key={m.id} value={m.id}>
+                        {m.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+              )}
+
               <Grid size={{ xs: 12, sm: isFree ? 12 : 6 }}>
                 <TextField
                   select

@@ -10,6 +10,7 @@ import type {
   JobOptions,
   Note,
   NoteTemplatesResponse,
+  ProvidersResponse,
   SavedNoteSummary,
   TranscriptInfo,
   TranscriptText,
@@ -105,6 +106,14 @@ export async function getNoteTemplates(
 ): Promise<NoteTemplatesResponse> {
   const res = await fetch(`${API}/notes/templates`, { signal });
   return asJson<NoteTemplatesResponse>(res);
+}
+
+/** List the note providers the UI may offer (+ the default). */
+export async function getProviders(
+  signal?: AbortSignal,
+): Promise<ProvidersResponse> {
+  const res = await fetch(`${API}/notes/providers`, { signal });
+  return asJson<ProvidersResponse>(res);
 }
 
 /** Kick off a note-generation job from a transcript. */

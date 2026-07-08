@@ -53,8 +53,17 @@ if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
   source "$PROJECT_ROOT/.venv/bin/activate"
 fi
 
+# --- Optional machine-local overrides (git-ignored) ---
+# env.local.sh can enable extra, machine-specific note providers via
+# STT_NOTE_PROVIDERS and set any local-only vars. It is not committed, so this
+# repo's default config stays local-only (Ollama). Sourced last so it wins.
+if [ -f "$PROJECT_ROOT/env.local.sh" ]; then
+  . "$PROJECT_ROOT/env.local.sh"
+fi
+
 echo "[env] Project root: $PROJECT_ROOT"
 echo "[env] HF_HOME=$HF_HOME"
 echo "[env] HF_TOKEN set: $([ -n "$HF_TOKEN" ] && echo yes || echo NO)"
 echo "[env] venv active: ${VIRTUAL_ENV:-none}"
 echo "[env] Note provider: $STT_NOTE_PROVIDER (model: $STT_NOTE_MODEL); OLLAMA_MODELS=$OLLAMA_MODELS"
+echo "[env] Note providers enabled: ${STT_NOTE_PROVIDERS:-ollama}"

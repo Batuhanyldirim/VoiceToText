@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from note_core import NoteOptions, TEMPLATE_CHOICES
+from note_core import NoteOptions, TEMPLATE_CHOICES, list_providers
 from note_core.progress import NoteEvent
 from stt_core import TranscribeOptions
 from stt_core.progress import ProgressEvent
@@ -314,6 +314,15 @@ def note_templates() -> dict:
     }
 
 
+@app.get("/notes/providers")
+def note_providers() -> dict:
+    """Providers the UI may offer (built-ins + any enabled local plugin), each
+    with its models and an `off_device` flag driving the PHI warning. The set is
+    gated by the operator (STT_NOTE_PROVIDERS) and each provider's availability —
+    so committed/default config exposes only the local model."""
+    return {"providers": list_providers(), "default_provider": _note_provider()}
+
+
 @app.post("/notes", status_code=202)
 async def create_note(body: NoteRequest) -> dict:
     # MUST be async: submit() binds the job to the running event loop via
@@ -323,13 +332,24 @@ async def create_note(body: NoteRequest) -> dict:
     if not body.transcript or not body.transcript.strip():
         raise HTTPException(400, "transcript is empty — nothing to summarize.")
 
-    # If the browser omits provider, use the server default. We never let the
-    # browser force cloud: note_core.get_provider gates "claude" behind the
-    # server env, so a claude request without opt-in errors cleanly via
-    # ProviderError inside the job (surfaced as status=error).
+    provider = (body.provider or _note_provider()).strip().lower()
+
+    # Validate the chosen provider against the enabled set (allowlist +
+    # availability). This both rejects a bogus/disabled provider up front and
+    # lets us fill in a sensible model for non-built-in providers, whose default
+    # model NoteOptions can't know about.
+    descriptors = {p["key"]: p for p in list_providers()}
+    if provider not in descriptors:
+        raise HTTPException(
+            400,
+            f"provider '{provider}' is not available. "
+            f"Enabled: {sorted(descriptors) or ['ollama']}.",
+        )
+    model = body.model or descriptors[provider].get("default_model") or None
+
     opts = NoteOptions(
-        provider=(body.provider or _note_provider()),
-        model=body.model or None,
+        provider=provider,
+        model=model,
         template=body.template,
         template_text=body.template_text,
     )

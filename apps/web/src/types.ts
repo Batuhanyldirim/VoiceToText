@@ -99,6 +99,28 @@ export interface NoteTemplatesResponse {
   cloud_enabled: boolean;
 }
 
+/** One selectable model within a provider. */
+export interface ProviderModel {
+  id: string;
+  label: string;
+}
+
+/** A selectable note provider, from GET /notes/providers. `off_device` drives
+ *  the PHI warning (the transcript leaves the machine when true). */
+export interface ProviderInfo {
+  key: string;
+  label: string;
+  models: ProviderModel[];
+  default_model: string | null;
+  off_device: boolean;
+}
+
+/** GET /notes/providers response. */
+export interface ProvidersResponse {
+  providers: ProviderInfo[];
+  default_provider: string;
+}
+
 /** Body for POST /notes. */
 export interface CreateNoteBody {
   transcript: string;

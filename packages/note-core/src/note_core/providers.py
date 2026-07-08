@@ -179,11 +179,38 @@ class ClaudeProvider:
             raise ProviderError(f"Claude API error: {type(e).__name__}.") from e
 
 
+# --- Optional local provider plugin seam -----------------------------------
+# Deployments can drop in extra, environment-specific providers (e.g. one that
+# shells out to a locally-authenticated CLI) without touching committed code, by
+# adding a `_local_providers` module next to this one. It is entirely optional:
+# if absent, only the built-in providers exist. Each entry is filtered by an
+# `available()` predicate so a provider that can't run on this machine never
+# appears. This keeps machine-specific integrations out of version control.
+def _local_registry() -> tuple[dict, list[dict]]:
+    """Return (factories, descriptors) from the optional _local_providers module.
+    factories: {key: callable() -> Provider}. descriptors: list of dicts with at
+    least {key, label, models, default_model, off_device, available}."""
+    try:
+        from . import _local_providers as lp  # type: ignore  # optional, may be absent
+        return dict(getattr(lp, "PROVIDERS", {})), list(getattr(lp, "DESCRIPTORS", []))
+    except Exception:  # noqa: BLE001 - a broken/absent plugin must never break the app
+        return {}, []
+
+
+def _provider_allowlist() -> set[str]:
+    """Providers the operator has enabled, from STT_NOTE_PROVIDERS (comma list).
+    Default 'ollama' — so committed/default config exposes only the local model
+    and any off-device or plugin provider must be turned on deliberately."""
+    raw = os.environ.get("STT_NOTE_PROVIDERS", "ollama")
+    return {p.strip().lower() for p in raw.split(",") if p.strip()}
+
+
 def get_provider(name: str) -> Provider:
     """Resolve a provider by name. The cloud provider is gated: it is only
     returned when the OPERATOR has explicitly selected it via STT_NOTE_PROVIDER
     (REQ-102). A request that asks for 'claude' without that server-side opt-in
-    is refused here, before any data is sent."""
+    is refused here, before any data is sent. Local-plugin providers are consulted
+    last (and only if enabled/available)."""
     name = (name or "").strip().lower()
     if name in ("ollama", ""):
         return OllamaProvider()
@@ -196,4 +223,56 @@ def get_provider(name: str) -> Provider:
                 "server environment). No data was sent."
             )
         return ClaudeProvider()
-    raise ProviderError(f"unknown provider '{name}'. Valid: ollama, claude.")
+    factories, _ = _local_registry()
+    if name in factories:
+        return factories[name]()
+    raise ProviderError(f"unknown provider '{name}'.")
+
+
+def list_providers() -> list[dict]:
+    """Descriptors for every provider the UI may offer, filtered by the operator
+    allowlist (STT_NOTE_PROVIDERS) and each provider's own availability. Shape per
+    entry: {key, label, models: [{id, label}], default_model, off_device: bool}.
+    The built-in local model is always described; the first-party cloud provider
+    only when its env opt-in is set; plugin providers only when available()."""
+    from .models import DEFAULT_OLLAMA_MODEL, DEFAULT_CLAUDE_MODEL
+
+    allow = _provider_allowlist()
+    out: list[dict] = []
+
+    if "ollama" in allow:
+        out.append({
+            "key": "ollama",
+            "label": "Ollama (yerel)",
+            "models": [{"id": DEFAULT_OLLAMA_MODEL, "label": DEFAULT_OLLAMA_MODEL}],
+            "default_model": DEFAULT_OLLAMA_MODEL,
+            "off_device": False,
+        })
+    if "claude" in allow and os.environ.get("STT_NOTE_PROVIDER", "").strip().lower() == "claude":
+        out.append({
+            "key": "claude",
+            "label": "Claude (bulut)",
+            "models": [{"id": DEFAULT_CLAUDE_MODEL, "label": DEFAULT_CLAUDE_MODEL}],
+            "default_model": DEFAULT_CLAUDE_MODEL,
+            "off_device": True,
+        })
+
+    _, descriptors = _local_registry()
+    for d in descriptors:
+        if d.get("key") not in allow:
+            continue
+        avail = d.get("available")
+        try:
+            if callable(avail) and not avail():
+                continue
+        except Exception:  # noqa: BLE001 - a flaky predicate shouldn't hide everything else
+            continue
+        out.append({
+            "key": d["key"],
+            "label": d.get("label", d["key"]),
+            "models": d.get("models", []),
+            "default_model": d.get("default_model"),
+            "off_device": bool(d.get("off_device", False)),
+        })
+
+    return out
