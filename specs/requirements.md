@@ -398,6 +398,35 @@ the first of the "patient/encounter" product tier. *(→ ADR-0015, ADR-0010)*
   The DB migration SHALL add these columns to a pre-existing notes table without
   data loss. *(→ ADR-0015, ADR-0010)*
 
+## Patient organization (Tier 1)
+
+Notes become findable by **patient**: a lightweight patient entity, notes attached
+to a patient, and browse-by-patient. This is the structural centerpiece of the
+patient/encounter reframing — introduced incrementally so the existing flat note
+list keeps working while patient grouping layers on top. *(→ ADR-0016, ADR-0010)*
+
+- **REQ-137** (Event) — WHEN the user creates or selects a **patient** (a
+  `{id, name, mrn?, created_at}` record) and assigns it to a note, THE SYSTEM
+  SHALL persist the note's `patient_id`, and SHALL let the same patient be reused
+  across many notes. Creating a patient by an already-used name SHALL reuse the
+  existing patient rather than duplicate it. *(→ ADR-0016, ADR-0010)*
+- **REQ-138** (Ubiquitous) — THE SYSTEM SHALL expose patients
+  (`GET /patients` with each patient's note count, `POST /patients`,
+  `GET /patients/{id}` with that patient's notes newest-first) and SHALL let a
+  note's patient be set/cleared (`PUT /notes/{id}/patient`), carrying
+  `patient_id` + `patient_name` on the note APIs (`GET /notes`,
+  `GET /notes/{id}`). *(→ ADR-0016)*
+- **REQ-139** (State) — WHILE a note is `final`, THE SYSTEM SHALL still allow
+  changing its **patient assignment** (filing is metadata, not note content — a
+  finalized note can still be (re)filed under the correct patient). *(→ ADR-0016,
+  REQ-133)*
+- **REQ-140** (Ubiquitous) — THE web UI SHALL let the user pick or create a
+  patient for a note (a **"Hasta"** selector), show the assigned patient on the
+  note and its sidebar row, and **filter the note list by patient**. The DB
+  migration SHALL add the patients table + the note `patient_id` column to a
+  pre-existing DB without data loss (existing notes remain unassigned). *(→
+  ADR-0016, ADR-0010)*
+
 ---
 
 ## Verification gate

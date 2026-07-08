@@ -46,6 +46,8 @@ class SavedNote:
     edited_note: Optional[str] = None
     status: str = "draft"
     finalized_at: Optional[str] = None
+    # Patient this note is filed under (ADR-0016). NULL = unassigned.
+    patient_id: Optional[str] = None
 
     @property
     def effective_note(self) -> str:
@@ -71,6 +73,7 @@ class SavedNote:
             "status": self.status,
             "finalized_at": self.finalized_at,
             "edited": self.edited,
+            "patient_id": self.patient_id,
         }
 
     def to_dict(self) -> dict:
@@ -81,6 +84,28 @@ class SavedNote:
         d["note"] = self.effective_note
         d["ai_note"] = self.note
         d["edited_note"] = self.edited_note
+        return d
+
+
+@dataclass
+class Patient:
+    """A patient a note can be filed under (ADR-0016). `mrn` (hasta no / medical
+    record number) is optional and free-form — this is a local single-doctor tool,
+    not an EHR identity system."""
+    id: str
+    name: str
+    mrn: Optional[str]
+    created_at: str            # ISO-8601 UTC
+
+    def to_dict(self, note_count: Optional[int] = None) -> dict:
+        d = {
+            "id": self.id,
+            "name": self.name,
+            "mrn": self.mrn,
+            "created_at": self.created_at,
+        }
+        if note_count is not None:
+            d["note_count"] = note_count
         return d
 
 
@@ -128,6 +153,19 @@ class NoteStore:
                 conn.execute("ALTER TABLE notes ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'")
             if "finalized_at" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN finalized_at TEXT")
+            # Patient organization (ADR-0016): patients table + a note→patient link.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patients (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    mrn        TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            if "patient_id" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN patient_id TEXT")
 
     def save(self, note: SavedNote) -> None:
         with self._connect() as conn:
@@ -136,26 +174,33 @@ class NoteStore:
                 INSERT OR REPLACE INTO notes
                     (id, created_at, title, source_name, provider, model, template,
                      transcript, note, transcribe_seconds, note_seconds,
-                     edited_note, status, finalized_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     edited_note, status, finalized_at, patient_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
                  note.transcribe_seconds, note.note_seconds,
-                 note.edited_note, note.status, note.finalized_at),
+                 note.edited_note, note.status, note.finalized_at, note.patient_id),
             )
 
-    def list(self) -> list[dict]:
-        """Newest first, summary shape (no bodies)."""
+    def list(self, patient_id: Optional[str] = None) -> list[dict]:
+        """Newest first, summary shape (no bodies). Optionally filter to one
+        patient. Each row carries patient_id + patient_name (via a LEFT JOIN)."""
+        sql = (
+            "SELECT n.id, n.created_at, n.title, n.source_name, n.provider, n.model, "
+            "n.template, n.transcribe_seconds, n.note_seconds, n.edited_note, "
+            "n.status, n.finalized_at, n.patient_id, p.name AS patient_name "
+            "FROM notes n LEFT JOIN patients p ON p.id = n.patient_id "
+        )
+        params: tuple = ()
+        if patient_id is not None:
+            sql += "WHERE n.patient_id = ? "
+            params = (patient_id,)
+        sql += "ORDER BY n.created_at DESC"
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, created_at, title, source_name, provider, model, template, "
-                "transcribe_seconds, note_seconds, "
-                "edited_note, status, finalized_at "
-                "FROM notes ORDER BY created_at DESC"
-            ).fetchall()
-        # Build via SavedNote-less summary so `edited` (edited_note != NULL) and
-        # the status fields are consistent with get()/to_dict().
+            rows = conn.execute(sql, params).fetchall()
+        # Build explicitly so `edited` (edited_note != NULL) and the status fields
+        # are consistent with get()/to_dict().
         out = []
         for r in rows:
             d = dict(r)
@@ -172,6 +217,8 @@ class NoteStore:
                 "status": d["status"] or "draft",
                 "finalized_at": d["finalized_at"],
                 "edited": d["edited_note"] is not None,
+                "patient_id": d["patient_id"],
+                "patient_name": d["patient_name"],
             })
         return out
 
@@ -231,6 +278,83 @@ class NoteStore:
         note.status = status
         note.finalized_at = finalized_at
         return note
+
+    # --- patient organization (ADR-0016) -------------------------------------
+
+    def create_patient(self, name: str, mrn: Optional[str] = None) -> Patient:
+        """Create a patient, REUSING an existing one with the same (trimmed,
+        case-insensitive) name so visits don't duplicate the patient."""
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("patient name is required")
+        existing = self.find_patient_by_name(name)
+        if existing:
+            # Fill in an MRN if the caller supplied one and the row lacked it.
+            if mrn and not existing.mrn:
+                with self._connect() as conn:
+                    conn.execute(
+                        "UPDATE patients SET mrn = ? WHERE id = ?", (mrn, existing.id)
+                    )
+                existing.mrn = mrn
+            return existing
+        import uuid
+        from datetime import datetime, timezone
+        pid = uuid.uuid4().hex[:12]
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO patients (id, name, mrn, created_at) VALUES (?, ?, ?, ?)",
+                (pid, name, mrn or None, created_at),
+            )
+        return Patient(id=pid, name=name, mrn=mrn or None, created_at=created_at)
+
+    def find_patient_by_name(self, name: str) -> Optional[Patient]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM patients WHERE lower(trim(name)) = lower(trim(?))",
+                (name,),
+            ).fetchone()
+        return Patient(**dict(row)) if row else None
+
+    def get_patient(self, patient_id: str) -> Optional[Patient]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM patients WHERE id = ?", (patient_id,)
+            ).fetchone()
+        return Patient(**dict(row)) if row else None
+
+    def list_patients(self) -> list[dict]:
+        """All patients (name order) with each one's note count."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT p.id, p.name, p.mrn, p.created_at, "
+                "COUNT(n.id) AS note_count "
+                "FROM patients p LEFT JOIN notes n ON n.patient_id = p.id "
+                "GROUP BY p.id ORDER BY lower(p.name)"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_note_patient(self, note_id: str, patient_id: Optional[str]) -> Optional[SavedNote]:
+        """(Re)file a note under a patient, or clear it (patient_id=None). Allowed
+        even when the note is final — filing is metadata, not content (REQ-139).
+        Returns None if the note is missing; ValueError if patient_id is unknown."""
+        note = self.get(note_id)
+        if not note:
+            return None
+        if patient_id is not None and not self.get_patient(patient_id):
+            raise ValueError(f"patient '{patient_id}' not found")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET patient_id = ? WHERE id = ?", (patient_id, note_id)
+            )
+        note.patient_id = patient_id
+        return note
+
+    def patient_name(self, patient_id: Optional[str]) -> Optional[str]:
+        if not patient_id:
+            return None
+        p = self.get_patient(patient_id)
+        return p.name if p else None
 
 
 class NoteLockedError(RuntimeError):

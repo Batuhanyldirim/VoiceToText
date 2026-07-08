@@ -1,0 +1,140 @@
+"""API endpoint tests via FastAPI TestClient (temp DB, no ML models).
+
+Covers the note edit/finalize lifecycle endpoints (ADR-0015) and the patient
+organization endpoints (ADR-0016), including status codes. Generation endpoints
+(/notes POST, transcription, streaming) are NOT exercised here — they need the
+models and stay under the behavioral gate.
+"""
+from __future__ import annotations
+
+
+def _seed_note(client, note_id="n1", note="# Not\ngövde", **extra):
+    """Persist a note directly via the app's store (bypasses generation)."""
+    import stt_api.main as main
+    from stt_api.store import SavedNote
+
+    defaults = dict(
+        id=note_id, created_at="2026-07-08T00:00:00Z", title="Test",
+        source_name=None, provider="ollama", model="qwen", template="soap",
+        transcript="tx", note=note,
+    )
+    defaults.update(extra)
+    main.note_store.save(SavedNote(**defaults))
+
+
+def test_health(client):
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+
+
+# --- note edit / finalize lifecycle ----------------------------------------
+
+def test_get_note_serves_effective_body(client):
+    _seed_note(client, note="AI ORIGINAL")
+    r = client.get("/notes/n1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["note"] == "AI ORIGINAL"
+    assert body["ai_note"] == "AI ORIGINAL"
+    assert body["note_status"] == "draft"
+    assert body["edited"] is False
+
+
+def test_patch_edits_note(client):
+    _seed_note(client, note="AI ORIGINAL")
+    r = client.patch("/notes/n1", json={"note": "DOCTOR EDIT"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["note"] == "DOCTOR EDIT"     # effective body
+    assert body["ai_note"] == "AI ORIGINAL"  # original preserved
+    assert body["edited"] is True
+
+
+def test_finalize_then_patch_conflicts(client):
+    _seed_note(client)
+    assert client.post("/notes/n1/finalize").status_code == 200
+    assert client.get("/notes/n1").json()["note_status"] == "final"
+    # editing a final note is a 409
+    r = client.patch("/notes/n1", json={"note": "blocked"})
+    assert r.status_code == 409
+
+
+def test_reopen_then_edit(client):
+    _seed_note(client)
+    client.post("/notes/n1/finalize")
+    assert client.post("/notes/n1/reopen").status_code == 200
+    assert client.get("/notes/n1").json()["note_status"] == "draft"
+    assert client.patch("/notes/n1", json={"note": "ok now"}).status_code == 200
+
+
+def test_revert_endpoint(client):
+    _seed_note(client, note="AI ORIGINAL")
+    client.patch("/notes/n1", json={"note": "EDIT"})
+    r = client.post("/notes/n1/revert")
+    assert r.status_code == 200
+    assert r.json()["note"] == "AI ORIGINAL" and r.json()["edited"] is False
+
+
+def test_lifecycle_endpoints_404_on_unknown(client):
+    assert client.patch("/notes/nope", json={"note": "x"}).status_code == 404
+    assert client.post("/notes/nope/finalize").status_code == 404
+    assert client.post("/notes/nope/reopen").status_code == 404
+    assert client.post("/notes/nope/revert").status_code == 404
+
+
+# --- patient organization --------------------------------------------------
+
+def test_create_and_list_patients(client):
+    r = client.post("/patients", json={"name": "Ayşe Demir", "mrn": "A-100"})
+    assert r.status_code == 201
+    pid = r.json()["id"]
+    # reuse by name (different case) -> same id, still one patient
+    r2 = client.post("/patients", json={"name": "ayşe demir"})
+    assert r2.json()["id"] == pid
+    patients = client.get("/patients").json()["patients"]
+    assert len(patients) == 1 and patients[0]["note_count"] == 0
+
+
+def test_create_patient_requires_name(client):
+    assert client.post("/patients", json={"name": "  "}).status_code == 400
+
+
+def test_assign_note_to_patient_flow(client):
+    _seed_note(client, "n1")
+    _seed_note(client, "n2")
+    pid = client.post("/patients", json={"name": "Ayşe"}).json()["id"]
+    # assign n1
+    r = client.put("/notes/n1/patient", json={"patient_id": pid})
+    assert r.status_code == 200
+    assert r.json()["patient_id"] == pid and r.json()["patient_name"] == "Ayşe"
+    # filter notes by patient
+    filtered = client.get(f"/notes?patient_id={pid}").json()["notes"]
+    assert [n["id"] for n in filtered] == ["n1"]
+    # unassigned notes carry patient_name None
+    all_notes = {n["id"]: n for n in client.get("/notes").json()["notes"]}
+    assert all_notes["n2"]["patient_name"] is None
+    # patient detail returns the patient + its notes
+    detail = client.get(f"/patients/{pid}").json()
+    assert detail["name"] == "Ayşe" and [n["id"] for n in detail["notes"]] == ["n1"]
+    # note_count updated
+    assert client.get("/patients").json()["patients"][0]["note_count"] == 1
+
+
+def test_reassign_patient_allowed_when_final(client):
+    _seed_note(client, "n1")
+    pid = client.post("/patients", json={"name": "Ayşe"}).json()["id"]
+    client.put("/notes/n1/patient", json={"patient_id": pid})
+    client.post("/notes/n1/finalize")
+    # filing is metadata — still allowed on a final note (REQ-139)
+    r = client.put("/notes/n1/patient", json={"patient_id": None})
+    assert r.status_code == 200 and r.json()["patient_id"] is None
+
+
+def test_assign_unknown_patient_400(client):
+    _seed_note(client, "n1")
+    r = client.put("/notes/n1/patient", json={"patient_id": "does-not-exist"})
+    assert r.status_code == 400
+
+
+def test_get_unknown_patient_404(client):
+    assert client.get("/patients/nope").status_code == 404

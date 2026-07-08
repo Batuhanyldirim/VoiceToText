@@ -337,6 +337,7 @@ Each deliberate choice has an ADR — read it before changing that area:
 - **In-app voice recording** — a browser `MediaRecorder` clip is wrapped as a File and pushed through the *existing* upload path (no second pipeline); client picks a server-accepted container. → [`adr/0013`](adr/0013-in-app-voice-recording.md) · satisfies REQ-120–124
 - **Live (streaming) transcription** — chunk ASR during recording (silence-aligned cuts, <30 s, timestamps offset), one global diarization pass at finish; a *separate* PCM-stream ingest path, local-only, enhancement skipped as a tradeoff. → [`adr/0014`](adr/0014-live-streaming-transcription.md) · satisfies REQ-125–131
 - **Editable & finalizable notes** — edits are an overlay (`edited_note`) that never overwrites the AI original (`note`); a `draft`→`final` lifecycle (`finalized_at` + edit-lock) with reopen + revert-to-AI. First slice of the patient/encounter product tier. → [`adr/0015`](adr/0015-editable-finalizable-notes.md) · satisfies REQ-132–136
+- **Patient organization** — a lightweight `patients` table + `notes.patient_id` link; file a note under a patient (name-reuse, optional MRN), browse/filter by patient. Additive to the flat note list, not a nav rebuild; (re)filing allowed even when a note is final. → [`adr/0016`](adr/0016-patient-organization.md) · satisfies REQ-137–140
 
 ## Error-handling & fallback strategy
 
@@ -393,15 +394,27 @@ through `emit()`.
 
 ## Testing strategy
 
-There is **no unit-test suite**; this is a prototype and the models are the hard
-part. Verification is behavioral and lives in the **verification gate** in
-[`requirements.md`](requirements.md#verification-gate):
+Two layers, split by what's actually testable (→ [`adr/0017`](adr/0017-pytest-store-and-api-suite.md)):
+
+**1. Fast pytest suite — the store + API layer** (`apps/api/tests/`, `make test`).
+Pure-Python, deterministic logic: SQLite migrations, the note edit/finalize
+lifecycle (ADR-0015), patient organization (ADR-0016), and the note/patient API
+endpoints (via FastAPI `TestClient`) with their status-code contracts. **No ML
+models are loaded**, so it runs in <1 s. Tests are hermetic — a **temp DB**, never
+the real `apps/api/notes.db` (PHI); the `client` fixture rebinds the app's
+`note_store` singleton to the temp DB (it does NOT reload the modules — that
+duplicates classes and breaks `pytest.raises`). Add/extend a test when you touch
+store or endpoint logic.
+
+**2. Behavioral gate — the ML pipeline** (the transcription/diarization models are
+too slow/nondeterministic to unit-test, so they stay behavioral):
 
 ```bash
-source env.sh && bash make_sample.sh && python transcribe.py samples/conversation.wav
+source env.sh && bash make_sample.sh && transcribe samples/conversation.wav
 ```
 
 PASS = `out/conversation.txt` has the header and ≥ 2 distinct `Speaker N` turns.
-Any change (feature or refactor) must still pass this gate; run with
-`--model small` for a faster loop. When adding behavior, add the matching
-`REQ-###` first, then extend the gate if the new behavior is observable.
+Any change to the pipeline must still pass this gate; run with `--model small` for
+a faster loop. When adding behavior, add the matching `REQ-###` first, then extend
+the pytest suite (deterministic layer) and/or the gate (observable pipeline
+behavior).

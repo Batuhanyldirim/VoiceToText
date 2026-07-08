@@ -13,6 +13,7 @@ import type {
   JobOptions,
   Note,
   NoteTemplatesResponse,
+  Patient,
   ProvidersResponse,
   SavedNoteSummary,
   StreamStatus,
@@ -246,11 +247,15 @@ export async function getTranscript(
   return asJson<TranscriptText>(res);
 }
 
-/** List saved notes (history), newest first. */
+/** List saved notes (history), newest first. Optionally filter by patient. */
 export async function listNotes(
   signal?: AbortSignal,
+  patientId?: string,
 ): Promise<SavedNoteSummary[]> {
-  const res = await fetch(`${API}/notes`, { signal });
+  const url = patientId
+    ? `${API}/notes?patient_id=${encodeURIComponent(patientId)}`
+    : `${API}/notes`;
+  const res = await fetch(url, { signal });
   const body = await asJson<{ notes: SavedNoteSummary[] }>(res);
   return body.notes ?? [];
 }
@@ -310,6 +315,47 @@ export async function reopenNote(id: string, signal?: AbortSignal): Promise<Note
 export async function revertNote(id: string, signal?: AbortSignal): Promise<Note> {
   const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/revert`, {
     method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Patient organization (ADR-0016)
+// ---------------------------------------------------------------------------
+
+/** List all patients (name order) with each one's note count. */
+export async function listPatients(signal?: AbortSignal): Promise<Patient[]> {
+  const res = await fetch(`${API}/patients`, { signal });
+  const body = await asJson<{ patients: Patient[] }>(res);
+  return body.patients ?? [];
+}
+
+/** Create a patient — or reuse an existing one with the same name. */
+export async function createPatient(
+  name: string,
+  mrn?: string,
+  signal?: AbortSignal,
+): Promise<Patient> {
+  const res = await fetch(`${API}/patients`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, mrn: mrn || undefined }),
+    signal,
+  });
+  return asJson<Patient>(res);
+}
+
+/** (Re)file a note under a patient, or clear it (patientId=null). */
+export async function setNotePatient(
+  noteId: string,
+  patientId: string | null,
+  signal?: AbortSignal,
+): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(noteId)}/patient`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ patient_id: patientId }),
     signal,
   });
   return asJson<Note>(res);

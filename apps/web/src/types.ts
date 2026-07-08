@@ -220,6 +220,9 @@ export interface SavedNoteSummary {
   status?: NoteLifecycle;
   finalized_at?: string | null;
   edited?: boolean;
+  // Patient organization (ADR-0016).
+  patient_id?: string | null;
+  patient_name?: string | null;
 }
 
 /** POST /notes response. */
@@ -241,6 +244,15 @@ export interface NoteResult {
 /** Edit/finalize lifecycle state of a saved note (ADR-0015). */
 export type NoteLifecycle = "draft" | "final";
 
+/** A patient a note can be filed under (ADR-0016). */
+export interface Patient {
+  id: string;
+  name: string;
+  mrn: string | null;
+  created_at: string;
+  note_count?: number;
+}
+
 /** GET /notes/{id} response — the note job status + result. */
 export interface Note {
   note_id: string;
@@ -261,6 +273,8 @@ export interface Note {
   edited?: boolean;
   note_status?: NoteLifecycle;    // draft | final
   finalized_at?: string | null;
+  patient_id?: string | null;
+  patient_name?: string | null;
 }
 
 /**

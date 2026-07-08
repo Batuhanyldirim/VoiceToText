@@ -15,5 +15,13 @@ stt-core = { workspace = true }
 note-core = { workspace = true }
 
 # Convenience: `uv run transcribe ...` from the repo root resolves the CLI.
+# pytest is a dev-only dep for the store + API test suite (ADR-0017). It does NOT
+# load the ML models (whisperx/torch/pyannote), so the suite runs in seconds.
 [dependency-groups]
-dev = []
+dev = ["pytest>=8.0"]
+
+# Test config: tests live under apps/api/tests. httpx (already a FastAPI dep)
+# backs FastAPI's TestClient; no ML models are imported by these tests.
+[tool.pytest.ini_options]
+testpaths = ["apps/api/tests"]
+addopts = "-q"

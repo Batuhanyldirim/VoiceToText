@@ -4,7 +4,7 @@
 
 PY := /opt/homebrew/opt/python@3.11/bin/python3.11
 
-.PHONY: help setup api api-dev web cli sample verify clean
+.PHONY: help setup api api-dev web cli sample verify test clean
 
 help:
 	@echo "Targets:"
@@ -15,6 +15,7 @@ help:
 	@echo "  make cli f=... - transcribe a file via the CLI (e.g. make cli f=meeting.mp4)"
 	@echo "  make sample   - generate samples/conversation.wav"
 	@echo "  make verify   - run the CLI on the sample and check >=2 speakers"
+	@echo "  make test     - run the fast store + API pytest suite (no ML models)"
 	@echo "  make clean    - see cleanup.sh (rm -rf the repo removes everything)"
 
 setup:
@@ -59,6 +60,11 @@ sample:
 verify:
 	transcribe samples/conversation.wav --model small
 	@grep -c "Speaker" out/conversation.txt >/dev/null && echo "verify: transcript written" || (echo "verify FAILED" && exit 1)
+
+# Fast store + API test suite (pytest). Loads NO ML models, so it runs in
+# seconds — the pipeline itself stays under `make verify` (the behavioral gate).
+test:
+	.venv/bin/python -m pytest
 
 clean:
 	bash cleanup.sh

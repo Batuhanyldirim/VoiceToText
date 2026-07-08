@@ -186,7 +186,18 @@ Three conveniences layer on top:
   `localStorage` pointer + SSE re-attach make an in-progress job survive a page
   refresh. Active jobs are **in-memory** — a server restart drops them.
 
-### The PASS/FAIL gate (behavioral — no unit suite)
+### Tests: fast pytest suite (store + API) + the behavioral pipeline gate
+
+Two layers (→ [`ADR-0017`](specs/adr/0017-pytest-store-and-api-suite.md)):
+
+**1. `make test`** — the fast pytest suite (`apps/api/tests/`) for the pure-Python
+store + API layer (migrations, note edit/finalize lifecycle, patient organization,
+endpoint status codes). No ML models; runs in <1 s; uses a **temp DB** (never the
+real `apps/api/notes.db`). Run it after any change to `store.py` / the note+patient
+endpoints, and add a test with new store/endpoint logic.
+
+**2. The behavioral pipeline gate** (the ML models are too slow/nondeterministic
+to unit-test):
 
 ```bash
 source env.sh
@@ -196,8 +207,8 @@ transcribe samples/conversation.wav               # add --model small to go ~4x 
 
 **PASS** = a transcript with **≥ 2 distinct `Speaker N` labels** and sensible
 text. Via the CLI: check `out/conversation.txt`. Via the API: upload the sample
-and confirm `result.num_speakers ≥ 2` (poll `GET /jobs/{id}`). Any change must
-still pass this gate.
+and confirm `result.num_speakers ≥ 2` (poll `GET /jobs/{id}`). Any pipeline change
+must still pass this gate.
 
 **Note gate:** with `ollama serve` running, generating a note from that
 transcript on the default local provider must produce a **Turkish** note in the

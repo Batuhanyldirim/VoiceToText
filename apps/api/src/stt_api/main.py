@@ -459,10 +459,11 @@ class NoteRequest(BaseModel):
 
 
 @app.get("/notes")
-def list_notes() -> dict:
+def list_notes(patient_id: Optional[str] = None) -> dict:
     """Durable note history (summary rows, newest first). Distinct route from the
-    static /notes/templates and the parameterized /notes/{id}."""
-    return {"notes": note_store.list()}
+    static /notes/templates and the parameterized /notes/{id}. Optional
+    ?patient_id=… filters to one patient (ADR-0016)."""
+    return {"notes": note_store.list(patient_id=patient_id)}
 
 
 @app.get("/notes/active")
@@ -565,6 +566,8 @@ def _saved_note_response(saved) -> dict:
         "edited": saved.edited,
         "note_status": saved.status,       # draft | final (edit lifecycle)
         "finalized_at": saved.finalized_at,
+        "patient_id": saved.patient_id,
+        "patient_name": note_store.patient_name(saved.patient_id),
         "result": {
             "note": saved.effective_note,
             "provider": saved.provider,
@@ -673,6 +676,62 @@ def revert_note(note_id: str) -> dict:
         saved = note_store.revert(note_id)
     except NoteLockedError as e:
         raise HTTPException(409, str(e))
+    if not saved:
+        raise HTTPException(404, "note not found")
+    return _saved_note_response(saved)
+
+
+# ---------------------------------------------------------------------------
+# Patient organization (ADR-0016). A lightweight patient entity a note can be
+# filed under; browse/filter notes by patient. Patient data is PHI — same
+# git-ignored project-local DB (ADR-0010/0003), never logged.
+# ---------------------------------------------------------------------------
+
+
+class PatientBody(BaseModel):
+    name: str
+    mrn: Optional[str] = None
+
+
+class NotePatientBody(BaseModel):
+    patient_id: Optional[str] = None  # None clears the assignment
+
+
+@app.get("/patients")
+def list_patients() -> dict:
+    """All patients (name order) with each one's note count."""
+    return {"patients": note_store.list_patients()}
+
+
+@app.post("/patients", status_code=201)
+def create_patient(body: PatientBody) -> dict:
+    """Create a patient — or reuse an existing one with the same name (ADR-0016)."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "patient name is required")
+    patient = note_store.create_patient(name, (body.mrn or "").strip() or None)
+    return patient.to_dict()
+
+
+@app.get("/patients/{patient_id}")
+def get_patient(patient_id: str) -> dict:
+    """A patient + its notes (summary rows, newest-first)."""
+    patient = note_store.get_patient(patient_id)
+    if not patient:
+        raise HTTPException(404, "patient not found")
+    d = patient.to_dict()
+    d["notes"] = note_store.list(patient_id=patient_id)
+    return d
+
+
+@app.put("/notes/{note_id}/patient")
+def set_note_patient(note_id: str, body: NotePatientBody) -> dict:
+    """(Re)file a note under a patient, or clear it. Allowed even when the note is
+    final — filing is metadata, not content (REQ-139)."""
+    try:
+        saved = note_store.set_note_patient(note_id, body.patient_id or None)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if not saved:
         raise HTTPException(404, "note not found")
     return _saved_note_response(saved)
