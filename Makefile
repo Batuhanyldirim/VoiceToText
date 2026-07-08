@@ -29,15 +29,20 @@ setup:
 # watched the whole repo root (incl. .venv's ~30k files), so an unrelated .py
 # touch would silently kill a running transcription. Use `make api-dev` when you
 # are editing backend code and want reload.
+# NOTE: we `source env.sh` inside the recipe so the server ALWAYS has HF_TOKEN,
+# the in-project cache redirects, and STT_NOTE_PROVIDERS (which enables the note
+# provider dropdown). Each make recipe line is its own shell, so this must be a
+# single `&&` chain. Running the bare uvicorn command in a shell that didn't
+# source env.sh silently drops those — e.g. the provider selector disappears.
 api:
-	.venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000
+	. ./env.sh && .venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000
 
 # Backend with auto-reload for active development. Reload is scoped to the
 # source dirs ONLY (apps/api + packages) — never .venv, models/, or jobs/ — so
 # model loads and job-output writes don't trigger a restart. A restart still
 # drops in-flight jobs; that's fine while iterating on code, not during a real run.
 api-dev:
-	.venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000 \
+	. ./env.sh && .venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000 \
 		--reload --reload-dir apps/api/src --reload-dir packages
 
 # Frontend dev server (proxies API calls to :8000).
