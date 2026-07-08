@@ -19,6 +19,22 @@ Two decisions:
   `medications_json` (JSON strings). Denormalized onto the note so `GET /notes/{id}`
   is self-contained; deleted with the note.
 
+## Update (single-call extraction — cost)
+
+The first cut ran extraction as a **manual, separate** provider call (a "Çıkar"
+button → a second request). For a paid cloud model that means paying twice, and it
+was extra friction. **Revised:** extraction happens in the **same generation call**
+as the note — the system prompt tells the model to append, after the note, a
+sentinel (`EXTRACTION_MARKER`) + a JSON block of problems/medications.
+`generate()` streams the note to the client but **holds back** the marker/JSON (a
+tail buffer prevents even a chunk-split marker from leaking), then splits the full
+text into `note` + `problems` + `medications` (fail-closed: no/invalid JSON → note
+is the whole text, empty lists). So the initial extraction costs **no extra
+request** and the lists appear automatically with the note. The standalone
+`POST /notes/{id}/extract` + `note_core.extract()` remain for **re-extraction after
+an edit** (the only path that spends a second call, and it's opt-in via "Yeniden
+çıkar").
+
 ## Decision
 
 Add a pure `note_core.extract()` that reuses providers to produce validated

@@ -209,7 +209,9 @@ class NoteJobManager:
             job.status = "done"
             # Persist the completed note to durable history. A store failure must
             # NOT crash the job (the in-memory result is still served), so guard.
-            self._persist(job, result.note)
+            # Problems/medications came from the SAME generation call (ADR-0023).
+            self._persist(job, result.note,
+                          problems=result.problems, medications=result.medications)
             self._emit_terminal(job, NoteEvent(stage="done", message="note complete"))
             log.info("note %s DONE chars=%d in %.1fs", job.id,
                      len(result.note), job.note_seconds)
@@ -220,14 +222,21 @@ class NoteJobManager:
             log.exception("note %s ERROR after %.1fs: %s", job.id,
                           time.monotonic() - t0, job.error)
 
-    def _persist(self, job: NoteJob, note: str) -> None:
+    def _persist(self, job: NoteJob, note: str,
+                 problems: list | None = None, medications: list | None = None) -> None:
         """Save a completed note to the store (best-effort; never raises), then
-        copy its source audio into the audio store if available (ADR-0019)."""
+        copy its source audio into the audio store if available (ADR-0019).
+        problems/medications came from the same generation call (ADR-0023)."""
         if self._store is None:
             return
         try:
+            import json as _json
             from .store import SavedNote
 
+            # Only persist extraction JSON when the model actually produced lists
+            # (None → not run / not emitted; keep the columns NULL so `extracted`
+            # stays False and the UI shows the run prompt).
+            has_ext = bool(problems) or bool(medications)
             self._store.save(SavedNote(
                 id=job.id,
                 created_at=datetime.now(timezone.utc).isoformat(),
@@ -243,6 +252,8 @@ class NoteJobManager:
                 transcript_json=job.transcript_json,
                 visit_type=job.visit_type,
                 chief_complaint=job.chief_complaint,
+                problems_json=_json.dumps(problems or [], ensure_ascii=False) if has_ext else None,
+                medications_json=_json.dumps(medications or [], ensure_ascii=False) if has_ext else None,
             ))
             # Assign the patient up front, if one was chosen (ADR-0022/0016).
             if job.patient_id:

@@ -195,6 +195,42 @@ def test_set_extraction_missing_note_returns_none(store):
     assert store.set_extraction("nope", [], []) is None
 
 
+def test_generate_splits_note_and_lists_single_call():
+    """note_core.generate() extracts problems/meds from the SAME call (ADR-0023):
+    the model appends a marker + JSON, which is split out and hidden from the
+    streamed note. Uses a fake provider — no model needed."""
+    import sys, importlib
+    sys.path.insert(0, "packages/note-core/src")
+    gmod = importlib.import_module("note_core.generate")
+    from note_core.extract import EXTRACTION_MARKER
+
+    class FakeProvider:
+        name = "fake"
+        def stream(self, system, user, opts, result):
+            combined = (
+                "# SOAP Notu\n## Subjektif\n- Öksürük var.\n\n"
+                + EXTRACTION_MARKER
+                + '\n{"problems":[{"name":"Öksürük"}],"medications":[{"name":"Parol"}]}'
+            )
+            for i in range(0, len(combined), 5):  # split the marker across chunks
+                yield combined[i:i + 5]
+
+    orig = gmod.get_provider
+    gmod.get_provider = lambda name: FakeProvider()
+    try:
+        deltas = []
+        res = gmod.generate("Doktor: ...\nHasta: öksürük", None, progress=lambda e: deltas.append(e))
+    finally:
+        gmod.get_provider = orig
+
+    streamed = "".join(e.delta for e in deltas if e.stage == "generating" and e.delta)
+    assert EXTRACTION_MARKER not in streamed          # marker never leaked to the UI
+    assert EXTRACTION_MARKER not in res.note          # clean note
+    assert streamed.strip() == res.note.strip()       # streamed == final note
+    assert res.problems == [{"name": "Öksürük"}]
+    assert res.medications == [{"name": "Parol"}]
+
+
 def test_extraction_parser_fail_closed():
     """note_core.parse_extraction never fabricates; garbage → empty lists."""
     import sys

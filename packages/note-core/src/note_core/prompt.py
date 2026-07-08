@@ -121,6 +121,16 @@ Nihai hâle getirmeden önce şunların tümünü doğrula:
 - Yalnızca seçilen biçimi ürettin; aynı bilgiyi bölümler arası tekrarlamadın.
 - Afiş/önsöz/kapak yok; not doğrudan başlıyor.
 
+## Notun ARDINDAN: yapılandırılmış sorun/ilaç listesi
+Notu tamamladıktan SONRA, ayrı bir satıra tam olarak şu işaretçiyi yaz:
+<<<SORUN_ILAC_JSON>>>
+ve hemen ardından SADECE geçerli bir JSON nesnesi ver (kod bloğu, açıklama yok):
+{"problems":[{"name":"...","status":"(ops.)","detail":"(ops.)"}],"medications":[{"name":"...","dose":"(ops.)","route":"(ops.)","frequency":"(ops.)"}]}
+Kurallar: YALNIZCA notta/transkriptte açıkça geçen sorun ve ilaçları listele, \
+hiçbir şey uydurma; yoksa ilgili diziyi boş bırak. Bu JSON bloğu notun bir parçası \
+DEĞİLDİR; işaretçiden önceki metin nihai nottur. İşaretçiyi ve JSON'u yalnızca bir \
+kez, en sonda yaz.
+
 Notu Türkçe yaz.\
 """
 

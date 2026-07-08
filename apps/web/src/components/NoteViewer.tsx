@@ -991,13 +991,14 @@ export default function NoteViewer({
                     onClick={() => void doExtract()}
                     disabled={extracting}
                   >
-                    {extracted ? "Yeniden çıkar" : "Çıkar"}
+                    Yeniden çıkar
                   </Button>
                 </Stack>
                 <Divider sx={{ mb: 1.5 }} />
                 {!extracted ? (
                   <Typography color="text.secondary" variant="body2">
-                    Bu nottan sorun ve ilaç listesini otomatik çıkarmak için "Çıkar".
+                    Bu not için sorun/ilaç listesi yok. Nottan çıkarmak için
+                    "Yeniden çıkar".
                   </Typography>
                 ) : (
                   <Stack direction={{ xs: "column", sm: "row" }} spacing={3}>

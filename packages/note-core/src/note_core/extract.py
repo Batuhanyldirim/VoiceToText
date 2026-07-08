@@ -167,6 +167,29 @@ def parse_extraction(raw: str) -> tuple[list, list]:
     return _clean_problems(obj.get("problems")), _clean_medications(obj.get("medications"))
 
 
+# Sentinel that separates the human-readable note from a machine-readable JSON
+# block of problems/medications, so BOTH come from a single generation call
+# (ADR-0023 — no second request). generate() splits on this and hides it from the
+# streamed/displayed note.
+EXTRACTION_MARKER = "<<<SORUN_ILAC_JSON>>>"
+
+
+def split_note_and_lists(full: str) -> tuple[str, list, list]:
+    """Split a generation that ends with EXTRACTION_MARKER + a JSON block into
+    (note_text, problems, medications). If the marker/JSON is absent or unparseable,
+    the note is the whole text and the lists are empty (fail-closed) — so a model
+    that ignores the JSON instruction still yields a perfect note."""
+    if not full:
+        return "", [], []
+    idx = full.rfind(EXTRACTION_MARKER)
+    if idx == -1:
+        return full, [], []
+    note = full[:idx].rstrip()
+    tail = full[idx + len(EXTRACTION_MARKER):]
+    problems, medications = parse_extraction(tail)
+    return note, problems, medications
+
+
 def extract(text: str, opts: NoteOptions | None = None) -> ExtractionResult:
     """Extract a problem list + medication list from note `text` via the configured
     provider. Grounded, Turkish, strict-JSON; fails closed to empty lists on

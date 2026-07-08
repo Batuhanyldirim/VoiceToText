@@ -8,6 +8,7 @@ API -> SSE), exactly mirroring the transcription pipeline.
 """
 from __future__ import annotations
 
+from .extract import EXTRACTION_MARKER, split_note_and_lists
 from .models import NoteOptions, NoteResult
 from .progress import NoteCallback, NoteEvent, noop
 from .prompt import CLINICAL_SYSTEM_PROMPT, build_user_prompt
@@ -54,14 +55,48 @@ def generate(
 
     progress(NoteEvent(stage="start", message=f"generating note via {provider.name}"))
     pieces: list[str] = []
+    # The model appends `EXTRACTION_MARKER` + a JSON block after the note (ADR-0023)
+    # so problems/medications come from THIS single call — no second request. We
+    # must NOT stream that marker/JSON to the client (they'd see raw JSON appear),
+    # so we hold back a tail buffer: emit text as deltas only up to the point where
+    # a marker prefix could begin. Once the marker appears, we stop emitting and
+    # just accumulate the rest for parsing.
+    emitted = 0            # chars of `full` already sent as deltas
+    marker_seen = False
+    full = ""
+    hold = len(EXTRACTION_MARKER)
     try:
         for delta in provider.stream(system, user, opts, result):
             pieces.append(delta)
-            progress(NoteEvent(stage="generating", delta=delta))
+            full += delta
+            if not marker_seen and EXTRACTION_MARKER in full:
+                marker_seen = True
+                # Emit any note text before the marker that we hadn't sent yet.
+                cut = full.index(EXTRACTION_MARKER)
+                if cut > emitted:
+                    progress(NoteEvent(stage="generating", delta=full[emitted:cut]))
+                    emitted = cut
+            if marker_seen:
+                continue
+            # Safe-to-emit boundary: keep back the last `hold` chars in case they
+            # are the start of the marker split across chunks.
+            safe = len(full) - hold
+            if safe > emitted:
+                progress(NoteEvent(stage="generating", delta=full[emitted:safe]))
+                emitted = safe
     except ProviderError as e:
         progress(NoteEvent(stage="error", message=str(e)))
         raise
 
-    result.note = "".join(pieces)
+    # Flush any remaining note text (when no marker was ever emitted).
+    if not marker_seen and len(full) > emitted:
+        progress(NoteEvent(stage="generating", delta=full[emitted:]))
+
+    # Split the note from the trailing JSON block (fail-closed: no marker → whole
+    # text is the note, empty lists).
+    note_text, problems, medications = split_note_and_lists(full)
+    result.note = note_text
+    result.problems = problems
+    result.medications = medications
     progress(NoteEvent(stage="done", message="note complete"))
     return result

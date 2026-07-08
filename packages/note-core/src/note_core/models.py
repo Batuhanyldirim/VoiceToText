@@ -53,6 +53,11 @@ class NoteResult:
     note: str                               # the full generated note (sections A–E)
     stopped_early: bool = False             # True if the model hit its output cap
     usage: dict = field(default_factory=dict)  # provider-specific counters (tokens, eval durations…)
+    # Problem/medication lists extracted in the SAME generation call (ADR-0023):
+    # the model appends a JSON block after the note, which generate() splits out —
+    # so extraction costs no extra request. Empty when not requested/unparseable.
+    problems: list = field(default_factory=list)
+    medications: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -62,4 +67,6 @@ class NoteResult:
             "note": self.note,
             "stopped_early": self.stopped_early,
             "usage": self.usage,
+            "problems": self.problems,
+            "medications": self.medications,
         }
