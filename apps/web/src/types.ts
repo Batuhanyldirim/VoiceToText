@@ -45,6 +45,38 @@ export interface Job {
   result: JobResult | null;
   error: string | null;
   original_name: string | null;
+  /** Epoch SECONDS when the job's worker actually started (anchors the live
+   *  timer so it survives a refresh). Null until running. */
+  started_at?: number | null;
+  created_at?: string | null;
+}
+
+/** One active (queued/running/failed) transcription, for the sidebar. */
+export interface ActiveJob {
+  id: string;
+  kind: "transcription";
+  status: JobStatus;
+  stage: Stage | null;
+  percent: number | null;
+  name: string;
+  started_at: number | null;
+  created_at: string | null;
+  error: string | null;
+}
+
+/** One active (queued/running/failed) note generation, for the sidebar. */
+export interface ActiveNote {
+  id: string;
+  kind: "note";
+  status: NoteJobStatus;
+  stage: NoteStage | null;
+  title: string | null;
+  source_name: string | null;
+  provider: string;
+  model: string;
+  started_at: number | null;
+  created_at: string | null;
+  error: string | null;
 }
 
 export interface CreateJobResponse {
@@ -194,6 +226,8 @@ export interface Note {
   error: string | null;
   transcribe_seconds?: number | null;
   note_seconds?: number | null;
+  started_at?: number | null;
+  created_at?: string | null;
 }
 
 /**

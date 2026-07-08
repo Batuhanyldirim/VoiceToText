@@ -91,6 +91,8 @@ export default function NoteViewer({
   // Which model produced the note (shown as a chip). Available as soon as the
   // job is known — captured from the first fetch and the terminal fetch.
   const [model, setModel] = useState<string | null>(null);
+  // Real server start (epoch ms) so the live timer survives a refresh.
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
 
   const finishedRef = useRef(false);
   // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
@@ -104,11 +106,13 @@ export default function NoteViewer({
     let abort: AbortController | null = null;
     let cancelled = false;
 
-    // Learn the model up front so it's shown during generation too (not just
-    // at the end). Best-effort — the terminal fetch confirms it either way.
+    // Learn the model + real start time up front so the model chip shows during
+    // generation and the timer is correct across refresh. Best-effort.
     void getNote(noteId)
       .then((j) => {
-        if (!cancelled && j.model) setModel(j.model);
+        if (cancelled) return;
+        if (j.model) setModel(j.model);
+        if (typeof j.started_at === "number") setStartedAtMs(j.started_at * 1000);
       })
       .catch(() => {});
 
@@ -270,9 +274,9 @@ export default function NoteViewer({
   const isError = status === "error" || error !== null;
   const isDone = status === "done";
   const isGenerating = !isError && !isDone;
-  // Live elapsed while the note streams; the backend's note_seconds is shown
-  // once done (this timer freezes when isGenerating flips false).
-  const elapsed = useElapsed(isGenerating);
+  // Live elapsed while the note streams, anchored to the real server start so a
+  // refresh shows true elapsed; the backend's note_seconds is shown once done.
+  const elapsed = useElapsed(isGenerating, startedAtMs);
 
   const handleCopy = async () => {
     try {

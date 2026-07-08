@@ -103,8 +103,16 @@ export default function App() {
   const [notesRefresh, setNotesRefresh] = useState(0);
   const bumpNotes = useCallback(() => setNotesRefresh((n) => n + 1), []);
 
-  // The saved note currently shown (for sidebar highlight).
-  const activeNoteId = view.screen === "note-saved" ? view.noteId : null;
+  // The id of whatever is currently open, so the sidebar highlights it —
+  // whether that's a saved note, a live note, or an in-progress transcription.
+  const activeId =
+    view.screen === "note-saved" ||
+    view.screen === "note-stream" ||
+    view.screen === "note-stream-fresh"
+      ? view.noteId
+      : view.screen === "progress" || view.screen === "result"
+        ? view.jobId
+        : null;
 
   // --- Restore a persisted session on first load (survives page refresh) ----
   useEffect(() => {
@@ -181,6 +189,7 @@ export default function App() {
       try {
         const { job_id } = await createJob(uploaded, options);
         setView({ screen: "progress", jobId: job_id });
+        bumpNotes(); // show the active transcription in the sidebar immediately
       } catch (e) {
         setSubmitError(
           e instanceof Error
@@ -191,7 +200,7 @@ export default function App() {
         setSubmitting(false);
       }
     },
-    [],
+    [bumpNotes],
   );
 
   const handleDone = useCallback((result: JobResult) => {
@@ -200,7 +209,8 @@ export default function App() {
         ? { screen: "result", jobId: v.jobId, result }
         : v,
     );
-  }, []);
+    bumpNotes(); // transcription finished → drop its active row from the sidebar
+  }, [bumpNotes]);
 
   const handleReset = useCallback(() => {
     setFile(null);
@@ -247,11 +257,23 @@ export default function App() {
           }
         : v,
     );
-  }, []);
+    bumpNotes(); // surface the in-progress note in the sidebar immediately
+  }, [bumpNotes]);
 
   // Note source-picker (brand-new note) → live token stream. Here we have no
   // originating transcription job/result, so we render a standalone NoteViewer.
   const handleFreshNoteStarted = useCallback((noteId: string) => {
+    setView({ screen: "note-stream-fresh", noteId });
+    bumpNotes();
+  }, [bumpNotes]);
+
+  // Open an in-progress / failed transcription from the sidebar.
+  const handleOpenJob = useCallback((jobId: string) => {
+    setView({ screen: "progress", jobId });
+  }, []);
+
+  // Open an in-progress / failed note from the sidebar (live view).
+  const handleOpenActiveNote = useCallback((noteId: string) => {
     setView({ screen: "note-stream-fresh", noteId });
   }, []);
 
@@ -295,8 +317,10 @@ export default function App() {
           }}
         >
           <NotesSidebar
-            activeNoteId={activeNoteId}
+            activeId={activeId}
             onOpenNote={handleOpenNote}
+            onOpenJob={handleOpenJob}
+            onOpenActiveNote={handleOpenActiveNote}
             onNewNote={handleNewNote}
             onCollapse={() => setSidebarOpen(false)}
             refreshToken={notesRefresh}

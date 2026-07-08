@@ -1,6 +1,8 @@
 // Single source of truth for the backend API base URL + typed fetch helpers.
 
 import type {
+  ActiveJob,
+  ActiveNote,
   CreateJobResponse,
   CreateNoteBody,
   CreateNoteResponse,
@@ -185,4 +187,40 @@ export async function deleteNote(
   });
   const body = await asJson<{ deleted: boolean }>(res);
   return body.deleted ?? false;
+}
+
+// ---------------------------------------------------------------------------
+// Active (in-progress / failed) work — shown at the top of the sidebar
+// ---------------------------------------------------------------------------
+
+/** List active (queued/running/failed) transcriptions. */
+export async function listActiveJobs(signal?: AbortSignal): Promise<ActiveJob[]> {
+  const res = await fetch(`${API}/jobs`, { signal });
+  const body = await asJson<{ jobs: ActiveJob[] }>(res);
+  return body.jobs ?? [];
+}
+
+/** List active (queued/running/failed) note generations. */
+export async function listActiveNotes(signal?: AbortSignal): Promise<ActiveNote[]> {
+  const res = await fetch(`${API}/notes/active`, { signal });
+  const body = await asJson<{ notes: ActiveNote[] }>(res);
+  return body.notes ?? [];
+}
+
+/** Retry a failed transcription with the same uploaded audio. */
+export async function retryJob(id: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${API}/jobs/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+    signal,
+  });
+  await asJson<{ job_id: string }>(res);
+}
+
+/** Retry a failed note with the same transcript + options. */
+export async function retryNote(id: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+    signal,
+  });
+  await asJson<{ note_id: string }>(res);
 }

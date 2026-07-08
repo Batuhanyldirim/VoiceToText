@@ -16,6 +16,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -32,14 +33,31 @@ class Job:
     input_path: Path
     out_dir: Path
     opts: TranscribeOptions
+    original_name: str = "audio"     # the uploaded filename (shown in the UI)
     status: str = "queued"          # queued | running | done | error
     stage: str = "queued"
     percent: float = 0.0
     result: Optional[dict] = None    # TranscribeResult.to_dict()
     error: Optional[str] = None
+    created_at: str = ""             # UTC ISO-8601, set at registration
+    started_at: Optional[float] = None  # epoch seconds at _run start (anchors the UI timer)
     # asyncio primitives, set when the job is submitted (bound to the running loop)
     queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     loop: Optional[asyncio.AbstractEventLoop] = field(default=None, repr=False)
+
+    def active_summary(self) -> dict:
+        """Sidebar row for an in-progress/failed transcription."""
+        return {
+            "id": self.id,
+            "kind": "transcription",
+            "status": self.status,
+            "stage": self.stage,
+            "percent": self.percent,
+            "name": self.original_name,
+            "started_at": self.started_at,
+            "created_at": self.created_at,
+            "error": self.error,
+        }
 
 
 class JobManager:
@@ -51,6 +69,14 @@ class JobManager:
 
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
+
+    def list_active(self) -> list[dict]:
+        """Summaries of jobs that aren't finished successfully — i.e. still
+        queued/running or failed (retryable). `done` jobs are excluded (their
+        result is what the transcript screen shows). Newest first."""
+        rows = [j.active_summary() for j in self._jobs.values() if j.status != "done"]
+        rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        return rows
 
     def new_job_dir(self, filename: str) -> tuple[str, Path, Path]:
         """Allocate a job id + dir and the target input path (preserving the
@@ -64,8 +90,11 @@ class JobManager:
     def register(self, job_id: str, job_dir: Path, input_path: Path,
                  filename: str, opts: TranscribeOptions) -> Job:
         """Register a job whose input file has already been streamed to disk."""
-        job = Job(id=job_id, input_path=input_path, out_dir=job_dir, opts=opts)
-        job.original_name = filename  # type: ignore[attr-defined]
+        job = Job(
+            id=job_id, input_path=input_path, out_dir=job_dir, opts=opts,
+            original_name=filename,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
         self._jobs[job_id] = job
         return job
 
@@ -74,6 +103,22 @@ class JobManager:
         job.queue = asyncio.Queue()
         job.loop = asyncio.get_running_loop()
         self._executor.submit(self._run, job)
+
+    def retry(self, job_id: str) -> Optional[Job]:
+        """Re-run a failed transcription using the SAME uploaded file still on
+        disk (no re-upload). Resets state and re-submits. Returns None if the
+        job or its input file is gone."""
+        job = self._jobs.get(job_id)
+        if not job or not job.input_path.is_file():
+            return None
+        job.status = "queued"
+        job.stage = "queued"
+        job.percent = 0.0
+        job.error = None
+        job.result = None
+        job.started_at = None
+        self.submit(job)
+        return job
 
     def _emit(self, job: Job, event: ProgressEvent) -> None:
         """Called from the worker thread — hop back onto the event loop to enqueue.
@@ -96,7 +141,8 @@ class JobManager:
     def _run(self, job: Job) -> None:
         job.status = "running"
         t0 = time.monotonic()
-        name = getattr(job, "original_name", job.input_path.name)
+        job.started_at = time.time()  # epoch anchor for the UI timer (survives refresh)
+        name = job.original_name
         log.info("job %s START file=%s diarize=%s model=%s", job.id, name,
                  job.opts.diarize, job.opts.model)
         try:

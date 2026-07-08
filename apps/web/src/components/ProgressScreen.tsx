@@ -61,6 +61,8 @@ export default function ProgressScreen({
   const [message, setMessage] = useState<string>("Başlatılıyor…");
   const [error, setError] = useState<string | null>(null);
   const [transport, setTransport] = useState<"sse" | "polling">("sse");
+  // Real server start (epoch ms) so the timer shows true elapsed after a refresh.
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
 
   // Keep the latest onDone in a ref so effect deps stay stable.
   const onDoneRef = useRef(onDone);
@@ -73,6 +75,14 @@ export default function ProgressScreen({
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let abort: AbortController | null = null;
     let cancelled = false;
+
+    // Learn the job's real start time so the timer is correct across refresh.
+    void getJob(jobId)
+      .then((j) => {
+        if (!cancelled && typeof j.started_at === "number")
+          setStartedAtMs(j.started_at * 1000);
+      })
+      .catch(() => {});
 
     async function fetchResultAndFinish(attempt = 0) {
       if (finishedRef.current || cancelled) return;
@@ -220,9 +230,10 @@ export default function ProgressScreen({
   const activeStep = useMemo(() => stageToStepIndex(stage), [stage]);
   const isError = stage === "error" || error !== null;
   const showDeterminate = stage === "transcribe" && typeof percent === "number";
-  // Live elapsed time while transcription runs (freezes on error; the flow
-  // navigates away on success, so there's no lingering "done" state here).
-  const elapsed = useElapsed(!isError);
+  // Live elapsed time while transcription runs, anchored to the real server
+  // start so a refresh shows true elapsed (freezes on error; the flow navigates
+  // away on success, so there's no lingering "done" state here).
+  const elapsed = useElapsed(!isError, startedAtMs);
 
   return (
     <Card>

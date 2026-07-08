@@ -55,9 +55,27 @@ class NoteJob:
     source_name: Optional[str] = None  # transcript stem / uploaded name, if any
     transcribe_seconds: Optional[float] = None  # carried from the source transcript
     note_seconds: Optional[float] = None        # wall-clock note generation time
+    created_at: str = ""             # UTC ISO-8601, set at registration
+    started_at: Optional[float] = None  # epoch seconds at _run start (anchors the UI timer)
     # asyncio primitives, set when the job is submitted (bound to the running loop)
     queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     loop: Optional[asyncio.AbstractEventLoop] = field(default=None, repr=False)
+
+    def active_summary(self) -> dict:
+        """Sidebar row for an in-progress/failed note generation."""
+        return {
+            "id": self.id,
+            "kind": "note",
+            "status": self.status,
+            "stage": self.stage,
+            "title": self.title,
+            "source_name": self.source_name,
+            "provider": self.opts.provider,
+            "model": self.opts.resolved_model(),
+            "started_at": self.started_at,
+            "created_at": self.created_at,
+            "error": self.error,
+        }
 
 
 class NoteJobManager:
@@ -71,6 +89,29 @@ class NoteJobManager:
 
     def get(self, note_id: str) -> Optional[NoteJob]:
         return self._jobs.get(note_id)
+
+    def list_active(self) -> list[dict]:
+        """Summaries of note jobs still queued/running or failed (retryable).
+        `done` notes are excluded — they live in the durable store. Newest
+        first."""
+        rows = [j.active_summary() for j in self._jobs.values() if j.status != "done"]
+        rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        return rows
+
+    def retry(self, note_id: str) -> Optional[NoteJob]:
+        """Re-run a failed note using the same transcript + options (no data
+        re-entry). Returns None if the job is gone."""
+        job = self._jobs.get(note_id)
+        if not job:
+            return None
+        job.status = "queued"
+        job.stage = "queued"
+        job.note_text = ""
+        job.result = None
+        job.error = None
+        job.started_at = None
+        self.submit(job)
+        return job
 
     def discard(self, note_id: str) -> bool:
         """Drop a job from the in-memory registry (used when deleting history)."""
@@ -95,6 +136,7 @@ class NoteJobManager:
             title=title,
             source_name=source_name,
             transcribe_seconds=transcribe_seconds,
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[note_id] = job
         return job
@@ -124,6 +166,7 @@ class NoteJobManager:
     def _run(self, job: NoteJob) -> None:
         job.status = "running"
         t0 = time.monotonic()
+        job.started_at = time.time()  # epoch anchor for the UI timer (survives refresh)
         log.info("note %s START provider=%s model=%s template=%s",
                  job.id, job.opts.provider, job.opts.resolved_model(), job.opts.template)
         try:

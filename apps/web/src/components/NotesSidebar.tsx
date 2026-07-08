@@ -3,7 +3,9 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
+  Divider,
   IconButton,
   Stack,
   Tooltip,
@@ -13,22 +15,40 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
-import type { SavedNoteSummary } from "../types";
-import { deleteNote, listNotes } from "../config/api";
+import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
+import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
+import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
+import type { ActiveJob, ActiveNote, SavedNoteSummary } from "../types";
+import {
+  deleteNote,
+  listActiveJobs,
+  listActiveNotes,
+  listNotes,
+  retryJob,
+  retryNote,
+} from "../config/api";
 import { formatSeconds } from "../utils/format";
 
 export const SIDEBAR_WIDTH = 288;
 
+// How often to re-poll active items so they progress / drop off when done.
+const POLL_MS = 3000;
+
 interface NotesSidebarProps {
-  /** The note currently open in the main pane (highlighted in the list). */
-  activeNoteId: string | null;
-  /** Open a saved note (App renders it read-only). */
+  /** The item currently open in the main pane (highlighted). May be a saved
+   *  note id, an active note id, or an active job id. */
+  activeId: string | null;
+  /** Open a saved note (read-only). */
   onOpenNote: (id: string) => void;
-  /** Start a brand-new note (App routes to the source picker). */
+  /** Return to an in-progress/failed transcription's progress screen. */
+  onOpenJob: (jobId: string) => void;
+  /** Return to an in-progress/failed note's live view. */
+  onOpenActiveNote: (noteId: string) => void;
+  /** Start a brand-new note (source picker). */
   onNewNote: () => void;
   /** Collapse the sidebar. */
   onCollapse: () => void;
-  /** Bump this to force a reload (e.g. after a new note is saved). */
+  /** Bump to force an immediate reload (e.g. right after a job/note starts). */
   refreshToken: number;
 }
 
@@ -43,44 +63,72 @@ function formatDate(value: string): string {
   });
 }
 
+// Turkish labels for transcription stages (mirrors ProgressScreen).
+const STAGE_TR: Record<string, string> = {
+  enhance: "İyileştirme",
+  transcribe: "Deşifre",
+  align: "Hizalama",
+  diarize: "Konuşmacı ayrımı",
+  fuse: "Birleştirme",
+  queued: "Sırada",
+};
 
 export default function NotesSidebar({
-  activeNoteId,
+  activeId,
   onOpenNote,
+  onOpenJob,
+  onOpenActiveNote,
   onNewNote,
   onCollapse,
   refreshToken,
 }: NotesSidebarProps) {
-  const [notes, setNotes] = useState<SavedNoteSummary[]>([]);
+  const [saved, setSaved] = useState<SavedNoteSummary[]>([]);
+  const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
+  const [activeNotes, setActiveNotes] = useState<ActiveNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    setLoadError(null);
     try {
-      const res = await listNotes(signal);
-      setNotes(res);
+      const [s, j, n] = await Promise.all([
+        listNotes(signal),
+        listActiveJobs(signal),
+        listActiveNotes(signal),
+      ]);
+      if (signal?.aborted) return;
+      setSaved(s);
+      setActiveJobs(j);
+      setActiveNotes(n);
+      setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) {
-        setLoadError(
-          e instanceof Error ? e.message : "Notlar yüklenemedi.",
-        );
+        setLoadError(e instanceof Error ? e.message : "Liste yüklenemedi.");
       }
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
+  // Initial load + reload on refreshToken change.
   useEffect(() => {
     const abort = new AbortController();
     void refresh(abort.signal);
     return () => abort.abort();
   }, [refresh, refreshToken]);
 
+  // Poll while there is active work so rows progress and drop off when done.
+  const hasActive = activeJobs.length > 0 || activeNotes.length > 0;
+  useEffect(() => {
+    if (!hasActive) return;
+    const id = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(id);
+  }, [hasActive, refresh]);
+
   const handleDelete = useCallback(
     async (e: React.MouseEvent, id: string) => {
-      e.stopPropagation(); // don't open the note when clicking delete
+      e.stopPropagation();
       if (!window.confirm("Bu notu silmek istediğinize emin misiniz?")) return;
       setDeletingId(id);
       try {
@@ -95,6 +143,35 @@ export default function NotesSidebar({
     [refresh],
   );
 
+  const handleRetry = useCallback(
+    async (
+      e: React.MouseEvent,
+      kind: "transcription" | "note",
+      id: string,
+    ) => {
+      e.stopPropagation();
+      setRetryingId(id);
+      try {
+        if (kind === "transcription") {
+          await retryJob(id);
+          onOpenJob(id);
+        } else {
+          await retryNote(id);
+          onOpenActiveNote(id);
+        }
+        await refresh();
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Tekrar denenemedi.");
+      } finally {
+        setRetryingId(null);
+      }
+    },
+    [refresh, onOpenJob, onOpenActiveNote],
+  );
+
+  const nothing =
+    !loading && !loadError && saved.length === 0 && !hasActive;
+
   return (
     <Box
       sx={{
@@ -105,18 +182,13 @@ export default function NotesSidebar({
         bgcolor: "background.paper",
       }}
     >
-      {/* Header: brand + collapse */}
+      {/* Header: title + collapse */}
       <Stack
         direction="row"
-        sx={{
-          alignItems: "center",
-          justifyContent: "space-between",
-          px: 2,
-          py: 1.5,
-        }}
+        sx={{ alignItems: "center", justifyContent: "space-between", px: 2, py: 1.5 }}
       >
         <Typography variant="subtitle2" sx={{ fontWeight: 800, letterSpacing: "-0.01em" }}>
-          Notlarım
+          {hasActive ? "Oturumlar" : "Notlarım"}
         </Typography>
         <Tooltip title="Kenar çubuğunu gizle">
           <IconButton size="small" onClick={onCollapse} aria-label="Kenar çubuğunu gizle">
@@ -127,12 +199,7 @@ export default function NotesSidebar({
 
       {/* New note */}
       <Box sx={{ px: 2, pb: 1.5 }}>
-        <Button
-          fullWidth
-          variant="outlined"
-          startIcon={<AddRoundedIcon />}
-          onClick={onNewNote}
-        >
+        <Button fullWidth variant="outlined" startIcon={<AddRoundedIcon />} onClick={onNewNote}>
           Yeni not
         </Button>
       </Box>
@@ -149,18 +216,55 @@ export default function NotesSidebar({
           <Stack sx={{ alignItems: "center", py: 4 }}>
             <CircularProgress size={20} />
           </Stack>
-        ) : notes.length === 0 && !loadError ? (
+        ) : nothing ? (
           <Typography
             variant="body2"
             color="text.secondary"
             sx={{ px: 2, py: 4, textAlign: "center" }}
           >
-            Henüz kayıtlı not yok. Başlamak için “Yeni not”.
+            Henüz bir şey yok. Başlamak için “Yeni not”.
           </Typography>
         ) : (
           <Stack spacing={0.5}>
-            {notes.map((n) => {
-              const active = n.id === activeNoteId;
+            {/* Active transcriptions */}
+            {activeJobs.map((j) => (
+              <ActiveRow
+                key={`job-${j.id}`}
+                selected={j.id === activeId}
+                icon={<GraphicEqRoundedIcon fontSize="small" />}
+                title={j.name}
+                failed={j.status === "error"}
+                statusLabel={
+                  j.status === "error"
+                    ? "Başarısız"
+                    : `Deşifre · ${STAGE_TR[j.stage ?? "queued"] ?? j.stage ?? ""}`
+                }
+                retrying={retryingId === j.id}
+                onOpen={() => onOpenJob(j.id)}
+                onRetry={(e) => void handleRetry(e, "transcription", j.id)}
+              />
+            ))}
+
+            {/* Active note generations */}
+            {activeNotes.map((n) => (
+              <ActiveRow
+                key={`note-${n.id}`}
+                selected={n.id === activeId}
+                icon={<DescriptionRoundedIcon fontSize="small" />}
+                title={n.title || "Klinik not"}
+                failed={n.status === "error"}
+                statusLabel={n.status === "error" ? "Başarısız" : "Not oluşturuluyor"}
+                retrying={retryingId === n.id}
+                onOpen={() => onOpenActiveNote(n.id)}
+                onRetry={(e) => void handleRetry(e, "note", n.id)}
+              />
+            ))}
+
+            {hasActive && saved.length > 0 && <Divider sx={{ my: 1 }} />}
+
+            {/* Saved notes */}
+            {saved.map((n) => {
+              const selected = n.id === activeId;
               return (
                 <Box
                   key={n.id}
@@ -176,33 +280,34 @@ export default function NotesSidebar({
                     borderRadius: 2,
                     px: 1.5,
                     py: 1,
-                    bgcolor: active ? "primary.light" : "transparent",
+                    bgcolor: selected ? "primary.light" : "transparent",
                     outline: "none",
                     "&:hover": {
-                      bgcolor: active ? "primary.light" : "action.hover",
+                      bgcolor: selected ? "primary.light" : "action.hover",
                       "& .note-del": { opacity: 1 },
                     },
-                    "&:focus-visible": { boxShadow: (t) => `0 0 0 2px ${t.palette.primary.main}` },
+                    "&:focus-visible": {
+                      boxShadow: (t) => `0 0 0 2px ${t.palette.primary.main}`,
+                    },
                   }}
                 >
                   <Stack direction="row" spacing={1} sx={{ alignItems: "center", pr: 3 }}>
                     <DescriptionRoundedIcon
                       fontSize="small"
-                      sx={{ color: active ? "primary.main" : "text.disabled", flexShrink: 0 }}
+                      sx={{ color: selected ? "primary.main" : "text.disabled", flexShrink: 0 }}
                     />
                     <Box sx={{ minWidth: 0 }}>
                       <Typography
                         variant="body2"
                         noWrap
-                        sx={{ fontWeight: active ? 700 : 500 }}
+                        sx={{ fontWeight: selected ? 700 : 500 }}
                         title={n.title}
                       >
                         {n.title || "(başlıksız)"}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" noWrap>
                         {formatDate(n.created_at)}
-                        {n.note_seconds != null &&
-                          ` · Not: ${formatSeconds(n.note_seconds)}`}
+                        {n.note_seconds != null && ` · Not: ${formatSeconds(n.note_seconds)}`}
                       </Typography>
                     </Box>
                   </Stack>
@@ -242,6 +347,82 @@ export default function NotesSidebar({
           </Stack>
         )}
       </Box>
+    </Box>
+  );
+}
+
+/** A row for an in-progress or failed session (transcription or note). Shows a
+ *  spinner + stage while running, or a ⚠ + "Tekrar dene" button when failed. */
+function ActiveRow({
+  selected,
+  icon,
+  title,
+  statusLabel,
+  failed,
+  retrying,
+  onOpen,
+  onRetry,
+}: {
+  selected: boolean;
+  icon: React.ReactNode;
+  title: string;
+  statusLabel: string;
+  failed: boolean;
+  retrying: boolean;
+  onOpen: () => void;
+  onRetry: (e: React.MouseEvent) => void;
+}) {
+  return (
+    <Box
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onOpen();
+      }}
+      sx={{
+        cursor: "pointer",
+        borderRadius: 2,
+        px: 1.5,
+        py: 1,
+        bgcolor: selected ? "primary.light" : "transparent",
+        outline: "none",
+        "&:hover": { bgcolor: selected ? "primary.light" : "action.hover" },
+        "&:focus-visible": { boxShadow: (t) => `0 0 0 2px ${t.palette.primary.main}` },
+      }}
+    >
+      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+        <Box sx={{ color: failed ? "error.main" : "primary.main", flexShrink: 0, display: "flex" }}>
+          {failed ? <ErrorOutlineRoundedIcon fontSize="small" /> : icon}
+        </Box>
+        <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+          <Typography variant="body2" noWrap sx={{ fontWeight: 600 }} title={title}>
+            {title}
+          </Typography>
+          <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mt: 0.25 }}>
+            {!failed && <CircularProgress size={11} thickness={6} />}
+            <Typography
+              variant="caption"
+              color={failed ? "error.main" : "text.secondary"}
+              noWrap
+            >
+              {statusLabel}
+            </Typography>
+          </Stack>
+        </Box>
+        {failed && (
+          <Chip
+            size="small"
+            color="primary"
+            variant="outlined"
+            icon={retrying ? <CircularProgress size={12} /> : <ReplayRoundedIcon />}
+            label="Tekrar dene"
+            onClick={onRetry}
+            disabled={retrying}
+            sx={{ flexShrink: 0 }}
+          />
+        )}
+      </Stack>
     </Box>
   );
 }

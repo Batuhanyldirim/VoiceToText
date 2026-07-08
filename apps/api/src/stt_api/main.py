@@ -144,6 +144,23 @@ async def create_job(
     return {"job_id": job.id, "status": job.status}
 
 
+@app.get("/jobs")
+def list_jobs() -> dict:
+    """Active (queued/running/failed) transcriptions for the sidebar. Finished
+    jobs are excluded — their transcript is shown on the result screen."""
+    return {"jobs": manager.list_active()}
+
+
+@app.post("/jobs/{job_id}/retry", status_code=202)
+async def retry_job(job_id: str) -> dict:
+    """Re-run a failed transcription with the SAME uploaded file (no re-upload).
+    async so submit() can bind to the running event loop (see create_job)."""
+    job = manager.retry(job_id)
+    if not job:
+        raise HTTPException(404, "job not found or its uploaded file is gone")
+    return {"job_id": job.id, "status": job.status}
+
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     job = manager.get(job_id)
@@ -156,7 +173,9 @@ def get_job(job_id: str) -> dict:
         "percent": job.percent,
         "result": job.result,
         "error": job.error,
-        "original_name": getattr(job, "original_name", None),
+        "original_name": job.original_name,
+        "started_at": job.started_at,
+        "created_at": job.created_at,
     }
 
 
@@ -301,6 +320,13 @@ def list_notes() -> dict:
     return {"notes": note_store.list()}
 
 
+@app.get("/notes/active")
+def list_active_notes() -> dict:
+    """Active (queued/running/failed) note generations for the sidebar. Finished
+    notes live in the durable history (/notes)."""
+    return {"notes": note_manager.list_active()}
+
+
 @app.get("/notes/templates")
 def note_templates() -> dict:
     """List note formats + the operator's provider config so the UI can show the
@@ -367,6 +393,16 @@ async def create_note(body: NoteRequest) -> dict:
     return {"note_id": job.id, "status": job.status}
 
 
+@app.post("/notes/{note_id}/retry", status_code=202)
+async def retry_note(note_id: str) -> dict:
+    """Re-run a failed note with the same transcript + options (no re-entry).
+    async so submit() can bind to the running event loop (see create_note)."""
+    job = note_manager.retry(note_id)
+    if not job:
+        raise HTTPException(404, "note not found")
+    return {"note_id": job.id, "status": job.status}
+
+
 @app.get("/notes/{note_id}")
 def get_note(note_id: str) -> dict:
     job = note_manager.get(note_id)
@@ -382,6 +418,8 @@ def get_note(note_id: str) -> dict:
             "error": job.error,
             "transcribe_seconds": job.transcribe_seconds,
             "note_seconds": job.note_seconds,
+            "started_at": job.started_at,
+            "created_at": job.created_at,
         }
     # Not live in memory — fall back to durable history so browsing a past note
     # returns its full body in the same response shape (status="done").
