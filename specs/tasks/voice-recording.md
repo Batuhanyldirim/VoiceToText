@@ -1,8 +1,12 @@
 # Task: In-app voice recording (record → transcribe)
 
-**Status:** APPROVED, not yet started. Cross-chat handoff — read `AGENTS.md`
-first, then this. The previous chat ran out of context right after approving
-this feature; everything else in the repo is up to date in the specs.
+**Status:** DONE (implemented on `feat/voice-recording`, branched off `main`
+after merging `feat/live-timers`). REQ-120–124 added; ADR-0013 records the
+decision; `design.md` has the data-flow note. Frontend-only: a new
+`VoiceRecorder.tsx` + a capture-source toggle in `UploadScreen.tsx`. **No backend
+change** — every container the client names (`.webm`/`.mp4`/`.ogg`) was already in
+`ALLOWED_SUFFIXES`. Build + lint green (only the 2 pre-existing TranscriptViewer
+warnings).
 
 ## Goal
 
@@ -65,13 +69,17 @@ backend accept the recording's container/codec.
   server's suffix check passes. Prefer `audio/webm` where supported; fall back to
   the browser default and map its `blob.type` to an allowed extension.
 
-## Requirements to add (EARS) — reserve REQ-111+ AFTER the spec backfill
+## Requirements added (EARS) — REQ-120–124
 
-> NOTE: a spec backfill (provider selection, timing, sessions sidebar) is landing
-> just before this and will consume REQ-111+. **Check the current highest REQ in
-> `specs/requirements.md` and continue from there** — do not hard-code a number.
+> The backfill consumed REQ-111–119, so voice recording landed as **REQ-120–124**
+> under a new "## Voice recording" section in `specs/requirements.md`:
+> - REQ-120 — record→stop creates a job via the same path as an upload.
+> - REQ-121 — recording stays on-device (only the local API).
+> - REQ-122 — mic denied / no device → clear Turkish message, no job.
+> - REQ-123 — live timer + stop + preview/re-record before submit.
+> - REQ-124 — client picks a nameable, server-accepted container up front.
 
-Draft under a new "## Voice recording" section, e.g.:
+Original draft (kept for reference):
 - (Event) WHEN the user records audio in the browser and stops, THE SYSTEM SHALL
   create a transcription job from that recording via the same path as an upload.
 - (Ubiquitous) THE SYSTEM SHALL keep the recording on-device except for the
@@ -108,10 +116,15 @@ PASS =
    TranscriptViewer exhaustive-deps warnings).
 
 ## Constraints to respect (don't violate)
-- [ ] Reuse the existing upload→`POST /jobs` path; do NOT add a second pipeline.
-- [ ] All new user-facing text in Turkish; match the MUI v9 style.
-- [ ] Recording stays local (only to the 127.0.0.1 API); no third-party upload.
-- [ ] Reuse `hooks/useElapsed.ts` for the recording timer; reuse the sessions
-      sidebar / persistence / retry (all job-id based, already working).
-- [ ] Keep the backend change minimal (ALLOWED_SUFFIXES only, if anything).
-- [ ] Work on a feature branch off the latest `main` (see handoff prompt).
+- [x] Reuse the existing upload→`POST /jobs` path; do NOT add a second pipeline.
+      *(`VoiceRecorder` hands a `File` to `UploadScreen`'s existing submit.)*
+- [x] All new user-facing text in Turkish; match the MUI v9 style.
+      *(Card/Stack/Button/Alert + a ToggleButtonGroup mode switch.)*
+- [x] Recording stays local (only to the 127.0.0.1 API); no third-party upload.
+- [x] Reuse `hooks/useElapsed.ts` for the recording timer; reuse the sessions
+      sidebar / persistence / retry (all job-id based, already working —
+      untouched: a recording is an ordinary transcription job).
+- [x] Keep the backend change minimal — **none needed**: `.webm`/`.mp4`/`.ogg`
+      were already in `ALLOWED_SUFFIXES`; the client names the blob accordingly.
+- [x] Work on a feature branch off the latest `main` (`feat/voice-recording`
+      off `main` after `feat/live-timers` was merged + pushed).

@@ -245,6 +245,36 @@ one local single-worker user. The DB holds PHI (transcript + note), so it stays
 inside the project and git-ignored: `rm -rf` still removes everything (ADR-0003)
 and nothing is ever committed.
 
+## Voice recording (data flow)
+
+A third way to start a transcription — record from the browser mic — that adds
+**no new pipeline or endpoint**: a `MediaRecorder` clip is wrapped as a `File`
+and pushed through the **existing** upload path (REQ-120–124).
+→ [`adr/0013`](adr/0013-in-app-voice-recording.md)
+
+```
+mic  ── getUserMedia({audio:true}) ──▶ MediaStream
+   │  MediaRecorder(pickSupportedMime())  [audio/webm;opus → webm → mp4 → ogg]
+   │     ondataavailable → chunks[]        live timer via useElapsed()
+   ▼  stop → new Blob(chunks) → new File([blob], "kayit-<ts>.<ext>", {type})
+UploadScreen.onSubmit(file, options)   ← SAME entry point as drag/drop upload
+   ▼
+App.handleSubmit → createJob(file, options) → POST /jobs (multipart, `file` field)
+   ▼
+ordinary transcription job (job_id) → progress SSE, sidebar session, refresh-safe
+timer, retry — all unchanged (ADR-0008, ADR-0012)
+```
+
+The client picks a container it can **name with a server-accepted suffix**
+(`MediaRecorder.isTypeSupported`, preferring `audio/webm`/Opus), because the API
+validates uploads by filename suffix (`ALLOWED_SUFFIXES`) and ffmpeg decodes all
+of `.webm`/`.ogg`/`.mp4`/`.m4a`/`.wav`. So the backend needs **no change** — the
+suffixes are already allowed. Before submitting, the captured clip is previewable
+via an `<audio>` blob URL and can be re-recorded. Mic-permission-denied / no
+`MediaRecorder` surfaces a Turkish error and starts no job. Privacy is identical
+to upload: the clip leaves the machine only as the multipart upload to the
+`127.0.0.1` API (ADR-0003, REQ-097, REQ-121).
+
 ## Design decisions (why it's built this way)
 
 Each deliberate choice has an ADR — read it before changing that area:

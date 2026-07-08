@@ -15,6 +15,8 @@ import {
   Stack,
   Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
@@ -23,7 +25,9 @@ import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
+import MicRoundedIcon from "@mui/icons-material/MicRounded";
 import type { JobOptions, ModelName } from "../types";
+import VoiceRecorder from "./VoiceRecorder";
 
 const ACCEPTED_EXTENSIONS = [
   ".wav",
@@ -71,6 +75,9 @@ export default function UploadScreen({
 }: UploadScreenProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  // Which capture source is showing: drop/pick a file, or record from the mic.
+  // A recording becomes a File too, so both feed the SAME submit path (ADR-0013).
+  const [mode, setMode] = useState<"upload" | "record">("upload");
   const [dragActive, setDragActive] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -91,6 +98,19 @@ export default function UploadScreen({
     setFileError(null);
     setFile(f);
   }, []);
+
+  // Switch capture source. Clearing the staged file on switch avoids submitting
+  // a stale pick after moving to the recorder (and vice-versa).
+  const handleModeChange = useCallback(
+    (_e: React.MouseEvent<HTMLElement>, next: "upload" | "record" | null) => {
+      if (!next || next === mode) return;
+      setFile(null);
+      setFileError(null);
+      if (inputRef.current) inputRef.current.value = "";
+      setMode(next);
+    },
+    [mode],
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -153,71 +173,98 @@ export default function UploadScreen({
 
       <Card>
         <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
-          {/* Dropzone */}
-          <Box
-            role="button"
-            tabIndex={0}
-            onClick={() => inputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragActive(true);
-            }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={handleDrop}
-            sx={{
-              cursor: "pointer",
-              borderRadius: 3,
-              border: "2px dashed",
-              borderColor: dragActive ? "primary.main" : "rgba(26,26,46,0.18)",
-              bgcolor: dragActive ? "primary.light" : "background.default",
-              transition: "all 0.15s ease",
-              px: 3,
-              py: { xs: 5, sm: 7 },
-              textAlign: "center",
-              outline: "none",
-              "&:hover": {
-                borderColor: "primary.main",
-                bgcolor: "rgba(91,91,214,0.04)",
-              },
-            }}
+          {/* Capture source toggle: upload a file, or record from the mic. */}
+          <ToggleButtonGroup
+            value={mode}
+            exclusive
+            onChange={handleModeChange}
+            fullWidth
+            size="small"
+            sx={{ mb: 2.5 }}
           >
-            <input
-              ref={inputRef}
-              type="file"
-              accept={ACCEPT_ATTR}
-              hidden
-              onChange={handleFileInput}
-            />
-            <CloudUploadOutlinedIcon
-              sx={{ fontSize: 56, color: "primary.main", mb: 1 }}
-            />
-            <Typography variant="h6" gutterBottom>
-              {dragActive
-                ? "Yüklemek için bırakın"
-                : "Dosyanızı buraya sürükleyip bırakın"}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              veya tıklayıp seçin
-            </Typography>
-            <Stack
-              direction="row"
-              spacing={1}
-              useFlexGap
-              sx={{ mt: 2, justifyContent: "center", flexWrap: "wrap" }}
+            <ToggleButton value="upload" disabled={submitting}>
+              <CloudUploadOutlinedIcon fontSize="small" sx={{ mr: 1 }} />
+              Dosya yükle
+            </ToggleButton>
+            <ToggleButton value="record" disabled={submitting}>
+              <MicRoundedIcon fontSize="small" sx={{ mr: 1 }} />
+              Ses kaydet
+            </ToggleButton>
+          </ToggleButtonGroup>
+
+          {/* Dropzone (upload mode) */}
+          {mode === "upload" && (
+            <Box
+              role="button"
+              tabIndex={0}
+              onClick={() => inputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+              sx={{
+                cursor: "pointer",
+                borderRadius: 3,
+                border: "2px dashed",
+                borderColor: dragActive ? "primary.main" : "rgba(26,26,46,0.18)",
+                bgcolor: dragActive ? "primary.light" : "background.default",
+                transition: "all 0.15s ease",
+                px: 3,
+                py: { xs: 5, sm: 7 },
+                textAlign: "center",
+                outline: "none",
+                "&:hover": {
+                  borderColor: "primary.main",
+                  bgcolor: "rgba(91,91,214,0.04)",
+                },
+              }}
             >
-              {ACCEPTED_EXTENSIONS.map((ext) => (
-                <Chip
-                  key={ext}
-                  label={ext.replace(".", "")}
-                  size="small"
-                  variant="outlined"
-                />
-              ))}
-            </Stack>
-          </Box>
+              <input
+                ref={inputRef}
+                type="file"
+                accept={ACCEPT_ATTR}
+                hidden
+                onChange={handleFileInput}
+              />
+              <CloudUploadOutlinedIcon
+                sx={{ fontSize: 56, color: "primary.main", mb: 1 }}
+              />
+              <Typography variant="h6" gutterBottom>
+                {dragActive
+                  ? "Yüklemek için bırakın"
+                  : "Dosyanızı buraya sürükleyip bırakın"}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                veya tıklayıp seçin
+              </Typography>
+              <Stack
+                direction="row"
+                spacing={1}
+                useFlexGap
+                sx={{ mt: 2, justifyContent: "center", flexWrap: "wrap" }}
+              >
+                {ACCEPTED_EXTENSIONS.map((ext) => (
+                  <Chip
+                    key={ext}
+                    label={ext.replace(".", "")}
+                    size="small"
+                    variant="outlined"
+                  />
+                ))}
+              </Stack>
+            </Box>
+          )}
+
+          {/* Recorder (record mode). It hands a finalized File back via setFile,
+              so the shared "Deşifre et" submit works identically to an upload. */}
+          {mode === "record" && (
+            <VoiceRecorder onRecordingChange={setFile} disabled={submitting} />
+          )}
 
           {fileError && (
             <Alert severity="error" sx={{ mt: 2 }}>
@@ -225,7 +272,9 @@ export default function UploadScreen({
             </Alert>
           )}
 
-          {file && (
+          {/* Staged-file chip. Only shown for uploads — the recorder shows its
+              own captured-clip player + "Tekrar kaydet" while in record mode. */}
+          {file && mode === "upload" && (
             <Box
               sx={{
                 mt: 2,

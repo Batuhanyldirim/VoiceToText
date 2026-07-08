@@ -287,6 +287,41 @@ optional git-ignored module, and both transcription and note runs are **timed**,
   THE SYSTEM SHALL re-run it with the same transcript + options (no data re-entry).
   *(→ ADR-0012, ADR-0008)*
 
+## Voice recording (record → transcribe)
+
+A third way to start a transcription, alongside file upload and transcript reuse:
+record from the browser microphone and feed the recording straight into the
+**existing** upload path. A `MediaRecorder` clip becomes a `File` and flows
+through `POST /jobs` unchanged — no second pipeline — so the sessions sidebar,
+live timer, refresh-persistence, and retry all apply as-is. *(→ ADR-0013,
+ADR-0008, ADR-0012, ADR-0003)*
+
+- **REQ-120** (Event) — WHEN the user records audio in the browser and stops,
+  THE SYSTEM SHALL create a transcription job from that recording via the **same
+  path as a file upload** (a `File` → `POST /jobs`), so the resulting job is
+  indistinguishable downstream from an uploaded one (same progress, sidebar
+  session, live timer, refresh-persistence, and retry). *(→ ADR-0013, ADR-0008,
+  ADR-0012)*
+- **REQ-121** (Ubiquitous) — THE SYSTEM SHALL keep the recording **on-device**
+  except for the upload to the local `127.0.0.1` API — the same privacy posture
+  as a file upload, with no third-party/off-device transfer. *(→ ADR-0003,
+  REQ-097)*
+- **REQ-122** (Unwanted) — IF microphone permission is denied or no input device
+  exists (or the browser lacks `MediaRecorder`/`getUserMedia`), THEN THE SYSTEM
+  SHALL show a clear **Turkish** message and SHALL NOT start a recording or a job.
+  *(→ ADR-0013)*
+- **REQ-123** (State) — WHILE recording, THE SYSTEM SHALL show a **live elapsed
+  timer** (reusing `hooks/useElapsed.ts`) and a recording indicator, and SHALL let
+  the user **stop** and then **preview / re-record** the captured clip before
+  submitting it for transcription. *(→ ADR-0013, REQ-116)*
+- **REQ-124** (Unwanted) — THE SYSTEM SHALL choose a `MediaRecorder`
+  container/codec it can name with a **server-accepted extension** (probing with
+  `MediaRecorder.isTypeSupported`, preferring `audio/webm`/Opus, falling back to
+  the browser default mapped to an allowed suffix), so the recording round-trips
+  through `POST /jobs`; IF no nameable/supported container is available, THEN THE
+  SYSTEM SHALL surface the error rather than starting an un-decodable job.
+  *(→ ADR-0013, REQ-090, REQ-091)*
+
 ---
 
 ## Verification gate
