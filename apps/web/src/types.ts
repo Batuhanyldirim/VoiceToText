@@ -143,6 +143,16 @@ export interface NoteTemplate {
   key: string;
   label: string;
   description: string;
+  /** True for a user-created custom template (key "custom:<id>"; ADR-0021). */
+  custom?: boolean;
+}
+
+/** A user-created custom template record (GET/POST /note-templates; ADR-0021). */
+export interface CustomTemplate {
+  id: string;
+  name: string;
+  body: string;
+  created_at: string;
 }
 
 /** GET /notes/templates response. */

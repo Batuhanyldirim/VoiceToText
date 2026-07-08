@@ -20,6 +20,8 @@ import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
+import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
+import TemplateManager from "./TemplateManager";
 import type {
   CreateNoteBody,
   NoteTemplate,
@@ -96,6 +98,22 @@ export default function NoteGenerator({
   const [templates, setTemplates] = useState<NoteTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Custom-template manager dialog (ADR-0021).
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+
+  // Reload just the template list (after the manager creates/edits/deletes one),
+  // preserving the current selection when it still exists.
+  const reloadTemplates = useCallback(async () => {
+    try {
+      const tpl = await getNoteTemplates();
+      setTemplates(tpl.templates ?? []);
+      setTemplate((cur) =>
+        tpl.templates?.some((t) => t.key === cur) ? cur : tpl.templates?.[0]?.key ?? cur,
+      );
+    } catch {
+      /* keep the current list on a transient failure */
+    }
+  }, []);
 
   // Providers (Ollama, and any enabled local plugin like Opus 4.8). The selected
   // provider + model are sent to POST /notes; `off_device` drives the PHI warning.
@@ -506,9 +524,19 @@ export default function NoteGenerator({
                   {choices.map((c) => (
                     <MenuItem key={c.key} value={c.key}>
                       {c.label}
+                      {c.custom ? " (özel)" : ""}
                     </MenuItem>
                   ))}
                 </TextField>
+                <Button
+                  size="small"
+                  startIcon={<TuneRoundedIcon />}
+                  onClick={() => setTemplateManagerOpen(true)}
+                  sx={{ mt: 0.5, color: "text.secondary" }}
+                  color="inherit"
+                >
+                  Şablonları yönet
+                </Button>
               </Grid>
 
               {isFree && (
@@ -566,6 +594,13 @@ export default function NoteGenerator({
           </CardContent>
         </Card>
       )}
+
+      {/* Custom-template manager (ADR-0021). On any change, reload the picker. */}
+      <TemplateManager
+        open={templateManagerOpen}
+        onClose={() => setTemplateManagerOpen(false)}
+        onChanged={() => void reloadTemplates()}
+      />
     </Stack>
   );
 }

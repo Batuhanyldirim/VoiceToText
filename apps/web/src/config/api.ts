@@ -7,6 +7,7 @@ import type {
   CreateNoteBody,
   CreateNoteResponse,
   CreateStreamResponse,
+  CustomTemplate,
   DownloadFormat,
   HealthResponse,
   Job,
@@ -322,6 +323,59 @@ export async function revertNote(id: string, signal?: AbortSignal): Promise<Note
     signal,
   });
   return asJson<Note>(res);
+}
+
+// --- custom note templates (ADR-0021) --------------------------------------
+
+/** List the user's custom note templates. */
+export async function listCustomTemplates(
+  signal?: AbortSignal,
+): Promise<CustomTemplate[]> {
+  const res = await fetch(`${API}/note-templates`, { signal });
+  const body = await asJson<{ templates: CustomTemplate[] }>(res);
+  return body.templates ?? [];
+}
+
+/** Create a custom template. */
+export async function createCustomTemplate(
+  name: string,
+  body: string,
+  signal?: AbortSignal,
+): Promise<CustomTemplate> {
+  const res = await fetch(`${API}/note-templates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, body }),
+    signal,
+  });
+  return asJson<CustomTemplate>(res);
+}
+
+/** Update a custom template (name and/or body). */
+export async function updateCustomTemplate(
+  id: string,
+  fields: { name?: string; body?: string },
+  signal?: AbortSignal,
+): Promise<CustomTemplate> {
+  const res = await fetch(`${API}/note-templates/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+    signal,
+  });
+  return asJson<CustomTemplate>(res);
+}
+
+/** Delete a custom template. */
+export async function deleteCustomTemplate(
+  id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API}/note-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    signal,
+  });
+  await asJson<{ deleted: boolean }>(res);
 }
 
 // --- version history (ADR-0020) --------------------------------------------

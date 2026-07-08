@@ -200,6 +200,17 @@ class NoteStore:
                 "CREATE INDEX IF NOT EXISTS idx_note_versions_note "
                 "ON note_versions(note_id, seq)"
             )
+            # Custom note templates (ADR-0021): named, reusable sample formats.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_templates (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    body       TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
     def save(self, note: SavedNote) -> None:
         with self._connect() as conn:
@@ -394,6 +405,69 @@ class NoteStore:
                 )
         note.edited_note = target
         return note
+
+    # --- custom note templates (ADR-0021) ------------------------------------
+
+    def list_templates(self) -> list[dict]:
+        """All custom templates, name order (id, name, body, created_at)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, name, body, created_at FROM note_templates "
+                "ORDER BY lower(name)"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_template(self, template_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, name, body, created_at FROM note_templates WHERE id = ?",
+                (template_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def create_template(self, name: str, body: str) -> dict:
+        name = (name or "").strip()
+        body = body or ""
+        if not name:
+            raise ValueError("template name is required")
+        if not body.strip():
+            raise ValueError("template body is required")
+        import uuid
+        from datetime import datetime, timezone
+        tid = uuid.uuid4().hex[:12]
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO note_templates (id, name, body, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (tid, name, body, created_at),
+            )
+        return {"id": tid, "name": name, "body": body, "created_at": created_at}
+
+    def update_template(self, template_id: str, name: Optional[str],
+                        body: Optional[str]) -> Optional[dict]:
+        existing = self.get_template(template_id)
+        if not existing:
+            return None
+        new_name = existing["name"] if name is None else name.strip()
+        new_body = existing["body"] if body is None else body
+        if not new_name:
+            raise ValueError("template name is required")
+        if not new_body.strip():
+            raise ValueError("template body is required")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE note_templates SET name = ?, body = ? WHERE id = ?",
+                (new_name, new_body, template_id),
+            )
+        return {**existing, "name": new_name, "body": new_body}
+
+    def delete_template(self, template_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM note_templates WHERE id = ?", (template_id,)
+            )
+        return cur.rowcount > 0
 
     # --- patient organization (ADR-0016) -------------------------------------
 

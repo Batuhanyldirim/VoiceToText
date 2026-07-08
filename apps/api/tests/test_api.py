@@ -196,6 +196,53 @@ def test_restore_409_when_final(client):
     assert client.post("/notes/n1/restore", json={"version_id": vid}).status_code == 409
 
 
+# --- custom note templates (ADR-0021) --------------------------------------
+
+def test_custom_template_crud(client):
+    # create
+    r = client.post("/note-templates", json={"name": "Kardiyoloji", "body": "# K\n## Şikayet\n"})
+    assert r.status_code == 201
+    tid = r.json()["id"]
+    # list
+    assert [t["name"] for t in client.get("/note-templates").json()["templates"]] == ["Kardiyoloji"]
+    # update
+    r = client.put(f"/note-templates/{tid}", json={"name": "Kardiyoloji Kontrol"})
+    assert r.status_code == 200 and r.json()["name"] == "Kardiyoloji Kontrol"
+    assert r.json()["body"].startswith("# K")  # body preserved
+    # delete
+    assert client.delete(f"/note-templates/{tid}").status_code == 200
+    assert client.get("/note-templates").json()["templates"] == []
+
+
+def test_custom_template_validation_and_404(client):
+    assert client.post("/note-templates", json={"name": "", "body": "x"}).status_code == 400
+    assert client.post("/note-templates", json={"name": "n", "body": " "}).status_code == 400
+    assert client.put("/note-templates/nope", json={"name": "x"}).status_code == 404
+    assert client.delete("/note-templates/nope").status_code == 404
+
+
+def test_generate_with_unknown_custom_template_400(client):
+    # POST /notes with a bogus custom:<id> must be rejected up front (resolution
+    # happens server-side before any generation).
+    r = client.post("/notes", json={
+        "transcript": "Doktor: ...\nHasta: ...",
+        "template": "custom:does-not-exist",
+    })
+    assert r.status_code == 400
+
+
+def test_custom_templates_appear_in_notes_templates(client):
+    r = client.post("/note-templates", json={"name": "Pediatri", "body": "# P\n"})
+    tid = r.json()["id"]
+    templates = client.get("/notes/templates").json()["templates"]
+    keys = [t["key"] for t in templates]
+    # built-ins + custom + free all present; custom uses the custom:<id> key
+    assert "soap" in keys and "free" in keys
+    assert f"custom:{tid}" in keys
+    custom = next(t for t in templates if t["key"] == f"custom:{tid}")
+    assert custom["label"] == "Pediatri" and custom.get("custom") is True
+
+
 # --- audio-linked source transcript (ADR-0019) ------------------------------
 
 def _seed_note_with_turns(client, note_id="n1"):

@@ -498,10 +498,19 @@ def list_active_notes() -> dict:
 @app.get("/notes/templates")
 def note_templates() -> dict:
     """List note formats + the operator's provider config so the UI can show the
-    right picker and PHI warning. Includes a "free" paste option alongside the
-    built-in templates."""
+    right picker and PHI warning. Built-in templates, then the user's CUSTOM
+    templates (ADR-0021, key "custom:<id>"), then a "free" paste option."""
     provider = _note_provider()
-    templates = list(TEMPLATE_CHOICES) + [{
+    custom = [
+        {
+            "key": f"custom:{t['id']}",
+            "label": t["name"],
+            "description": "Özel şablon",
+            "custom": True,
+        }
+        for t in note_store.list_templates()
+    ]
+    templates = list(TEMPLATE_CHOICES) + custom + [{
         "key": "free",
         "label": "Paste my own format",
         "description": "Paste a sample note in your own layout; the note will follow it.",
@@ -511,6 +520,46 @@ def note_templates() -> dict:
         "provider": provider,
         "cloud_enabled": provider == "claude",
     }
+
+
+# --- custom note template CRUD (ADR-0021) ----------------------------------
+
+
+class TemplateBody(BaseModel):
+    name: Optional[str] = None
+    body: Optional[str] = None
+
+
+@app.get("/note-templates")
+def list_custom_templates() -> dict:
+    """The user's custom note templates (id, name, body, created_at)."""
+    return {"templates": note_store.list_templates()}
+
+
+@app.post("/note-templates", status_code=201)
+def create_custom_template(body: TemplateBody) -> dict:
+    try:
+        return note_store.create_template(body.name or "", body.body or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/note-templates/{template_id}")
+def update_custom_template(template_id: str, body: TemplateBody) -> dict:
+    try:
+        tpl = note_store.update_template(template_id, body.name, body.body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not tpl:
+        raise HTTPException(404, "template not found")
+    return tpl
+
+
+@app.delete("/note-templates/{template_id}")
+def delete_custom_template(template_id: str) -> dict:
+    if not note_store.delete_template(template_id):
+        raise HTTPException(404, "template not found")
+    return {"deleted": True}
 
 
 @app.get("/notes/providers")
@@ -546,11 +595,23 @@ async def create_note(body: NoteRequest) -> dict:
         )
     model = body.model or descriptors[provider].get("default_model") or None
 
+    # Resolve a CUSTOM template (key "custom:<id>", ADR-0021) server-side to a
+    # saved "free" sample — so note_core is unchanged. Never trust a body from the
+    # client for a saved template; a missing id is a clear 4xx.
+    template = body.template
+    template_text = body.template_text
+    if template and template.startswith("custom:"):
+        tpl = note_store.get_template(template.split(":", 1)[1])
+        if not tpl:
+            raise HTTPException(400, "custom template not found")
+        template = "free"
+        template_text = tpl["body"]
+
     opts = NoteOptions(
         provider=provider,
         model=model,
-        template=body.template,
-        template_text=body.template_text,
+        template=template,
+        template_text=template_text,
     )
     # Serialize the structured turns for persistence (ADR-0019), if provided.
     transcript_json = (

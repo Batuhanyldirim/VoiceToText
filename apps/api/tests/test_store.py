@@ -167,6 +167,29 @@ def test_search_blank_returns_all(store):
     assert len(store.list(q="   ")) == 2
 
 
+# --- custom note templates (ADR-0021) --------------------------------------
+
+def test_template_crud(store):
+    t = store.create_template("Kardiyoloji", "# K\n## Şikayet\n")
+    assert t["name"] == "Kardiyoloji" and t["id"]
+    assert [x["name"] for x in store.list_templates()] == ["Kardiyoloji"]
+    # update name only keeps body
+    u = store.update_template(t["id"], name="Kardiyo Kontrol", body=None)
+    assert u["name"] == "Kardiyo Kontrol" and u["body"].startswith("# K")
+    assert store.get_template(t["id"])["name"] == "Kardiyo Kontrol"
+    assert store.delete_template(t["id"]) is True
+    assert store.list_templates() == []
+
+
+def test_template_validation(store):
+    with pytest.raises(ValueError):
+        store.create_template("", "body")
+    with pytest.raises(ValueError):
+        store.create_template("name", "   ")
+    assert store.update_template("nope", "x", "y") is None
+    assert store.delete_template("nope") is False
+
+
 # --- autosave + version history (ADR-0020) ----------------------------------
 
 def test_edits_snapshot_prior_body_as_versions(store):

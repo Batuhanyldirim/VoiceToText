@@ -466,6 +466,26 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## Custom note templates (Tier 2)
+
+Beyond the built-in SOAP / Ö&M formats, the user can save their own reusable note
+templates (a named sample format) instead of re-pasting a "free" format each time.
+*(→ ADR-0021, ADR-0009, ADR-0010)*
+
+- **REQ-150** (Event) — WHEN the user creates, edits, or deletes a **custom
+  template** (a `{id, name, body, created_at}` record), THE SYSTEM SHALL persist
+  it in the project-local, git-ignored store and expose CRUD
+  (`GET/POST /note-templates`, `PUT/DELETE /note-templates/{id}`). *(→ ADR-0021,
+  ADR-0010)*
+- **REQ-151** (Event) — WHEN the UI lists note templates (`GET /notes/templates`),
+  THE SYSTEM SHALL return the **built-in** templates, the **custom** templates
+  (each marked as custom), and the **"free"** paste option — so custom templates
+  appear in the same picker. *(→ ADR-0021, ADR-0009)*
+- **REQ-152** (Event) — WHEN a note is generated with a **custom** template, THE
+  SYSTEM SHALL resolve it to its stored body and drive generation from that format
+  (equivalent to a saved "free" sample), producing a note in that layout without
+  requiring any change to `note_core`. *(→ ADR-0021, ADR-0009)*
+
 ## Autosave & version history (Tier 2)
 
 Editing a note should never lose work, and prior versions should be recoverable.
