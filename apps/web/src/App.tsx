@@ -1,10 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AppBar,
   Box,
+  CircularProgress,
   Container,
   CssBaseline,
   IconButton,
+  Stack,
   Toolbar,
   Tooltip,
   Typography,
@@ -14,13 +16,18 @@ import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import theme from "./theme";
 import type { JobOptions, JobResult } from "./types";
-import { createJob } from "./config/api";
+import { createJob, getJob } from "./config/api";
 import UploadScreen from "./components/UploadScreen";
 import ProgressScreen from "./components/ProgressScreen";
 import TranscriptViewer from "./components/TranscriptViewer";
 import NoteGenerator from "./components/NoteGenerator";
 import NoteViewer from "./components/NoteViewer";
 import NotesSidebar, { SIDEBAR_WIDTH } from "./components/NotesSidebar";
+import {
+  loadSession,
+  saveSession,
+  type PersistedView,
+} from "./utils/session";
 
 type View =
   | { screen: "upload" }
@@ -55,11 +62,40 @@ function transcriptToText(result: JobResult): string {
     .join("\n");
 }
 
+/** Map the rich in-memory View to the minimal serializable pointer we persist.
+ *  Views that can't/needn't survive a refresh (the picker holding a File, the
+ *  bare upload screen) map to null → cleared. */
+function viewToPersisted(view: View, fileName: string | null): PersistedView | null {
+  switch (view.screen) {
+    case "progress":
+      return { screen: "progress", jobId: view.jobId, fileName };
+    case "result":
+      return { screen: "result", jobId: view.jobId, fileName };
+    case "note-stream":
+      return { screen: "note-stream", jobId: view.jobId, fileName, noteId: view.noteId };
+    case "note-source":
+      return { screen: "note-source" };
+    case "note-stream-fresh":
+      return { screen: "note-stream-fresh", noteId: view.noteId };
+    case "note-saved":
+      return { screen: "note-saved", noteId: view.noteId };
+    // "upload" and "note-setup" (holds a File / picker state) are not persisted.
+    default:
+      return null;
+  }
+}
+
 export default function App() {
   const [view, setView] = useState<View>({ screen: "upload" });
   const [file, setFile] = useState<File | null>(null);
+  // The uploaded file's NAME, kept separately so it survives a refresh (the
+  // File blob itself can't be persisted, but the name drives the audio-player
+  // label / display and is safe to store).
+  const [fileName, setFileName] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // True while we rehydrate a persisted session from the backend on first load.
+  const [restoring, setRestoring] = useState(true);
 
   // Persistent left sidebar (ChatGPT-style note history).
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -70,11 +106,78 @@ export default function App() {
   // The saved note currently shown (for sidebar highlight).
   const activeNoteId = view.screen === "note-saved" ? view.noteId : null;
 
+  // --- Restore a persisted session on first load (survives page refresh) ----
+  useEffect(() => {
+    let cancelled = false;
+    const saved = loadSession();
+    if (!saved) {
+      setRestoring(false);
+      return;
+    }
+    (async () => {
+      try {
+        switch (saved.screen) {
+          case "note-source":
+          case "note-stream-fresh":
+          case "note-saved":
+            // No transcription job to rebuild — restore the pointer directly.
+            setView(saved);
+            return;
+          case "progress":
+            // Still-running (or finished) job: re-attach the progress screen; it
+            // re-opens the SSE stream and transitions to result on done.
+            setFileName(saved.fileName);
+            setView({ screen: "progress", jobId: saved.jobId });
+            return;
+          case "result":
+          case "note-stream": {
+            // These need the finished JobResult back — re-fetch it.
+            setFileName(saved.fileName);
+            const job = await getJob(saved.jobId);
+            if (cancelled) return;
+            if (job.status === "done" && job.result) {
+              if (saved.screen === "result") {
+                setView({ screen: "result", jobId: saved.jobId, result: job.result });
+              } else {
+                setView({
+                  screen: "note-stream",
+                  jobId: saved.jobId,
+                  result: job.result,
+                  transcript: transcriptToText(job.result),
+                  noteId: saved.noteId,
+                });
+              }
+            } else if (job.status !== "error") {
+              // Not done yet — send them back to the progress screen to watch it.
+              setView({ screen: "progress", jobId: saved.jobId });
+            }
+            // job errored / gone → fall through to the default upload screen.
+            return;
+          }
+        }
+      } catch {
+        /* stale/unknown job — start fresh on the upload screen */
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // --- Persist the current screen whenever it changes -----------------------
+  useEffect(() => {
+    if (restoring) return; // don't clobber the saved session mid-restore
+    saveSession(viewToPersisted(view, fileName));
+  }, [view, fileName, restoring]);
+
   const handleSubmit = useCallback(
     async (uploaded: File, options: JobOptions) => {
       setSubmitting(true);
       setSubmitError(null);
       setFile(uploaded);
+      setFileName(uploaded.name);
       try {
         const { job_id } = await createJob(uploaded, options);
         setView({ screen: "progress", jobId: job_id });
@@ -101,6 +204,7 @@ export default function App() {
 
   const handleReset = useCallback(() => {
     setFile(null);
+    setFileName(null);
     setSubmitError(null);
     setView({ screen: "upload" });
   }, []);
@@ -254,6 +358,13 @@ export default function App() {
           </AppBar>
 
           <Container maxWidth="md" sx={{ py: { xs: 3, sm: 5 }, flexGrow: 1 }}>
+            {restoring ? (
+              <Stack sx={{ alignItems: "center", py: 10 }} spacing={2}>
+                <CircularProgress />
+                <Typography color="text.secondary">Oturum geri yükleniyor…</Typography>
+              </Stack>
+            ) : (
+              <>
             {view.screen === "upload" && (
               <UploadScreen
                 onSubmit={handleSubmit}
@@ -265,7 +376,7 @@ export default function App() {
             {view.screen === "progress" && (
               <ProgressScreen
                 jobId={view.jobId}
-                fileName={file?.name ?? null}
+                fileName={file?.name ?? fileName}
                 onDone={handleDone}
                 onReset={handleReset}
               />
@@ -323,6 +434,8 @@ export default function App() {
                 onBack={handleReset}
                 onReset={handleReset}
               />
+            )}
+              </>
             )}
           </Container>
         </Box>
