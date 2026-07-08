@@ -7,8 +7,15 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogContent,
+  DialogTitle,
   Divider,
+  IconButton,
+  List,
+  ListItemButton,
   ListItemIcon,
+  ListItemText,
   Menu,
   MenuItem,
   Snackbar,
@@ -34,17 +41,20 @@ import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
 import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
+import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import PatientSelector from "./PatientSelector";
 import { markdownToPlainText, printNoteAsPdf } from "../utils/noteExport";
-import type { Note, NoteSSEPayload, NoteStage, Turn } from "../types";
+import type { Note, NoteSSEPayload, NoteStage, NoteVersion, Turn } from "../types";
 import SourceTranscript from "./SourceTranscript";
 import {
   ApiError,
   editNote,
   finalizeNote,
   getNote,
+  listNoteVersions,
   noteEventsUrl,
   reopenNote,
+  restoreNoteVersion,
   revertNote,
 } from "../config/api";
 import { useElapsed } from "../hooks/useElapsed";
@@ -135,6 +145,13 @@ export default function NoteViewer({
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
+  // Autosave (ADR-0020): "idle" | "saving" | "saved". Version-history dialog state.
+  const [autosaveState, setAutosaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState<NoteVersion[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  // The last body we successfully persisted, so autosave skips no-op saves.
+  const savedBodyRef = useRef<string>("");
 
   const finishedRef = useRef(false);
   // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
@@ -390,6 +407,8 @@ export default function NoteViewer({
 
   const startEdit = () => {
     setDraftText(note);
+    savedBodyRef.current = note; // baseline for autosave no-op detection
+    setAutosaveState("idle");
     setEditing(true);
   };
 
@@ -397,13 +416,67 @@ export default function NoteViewer({
     setBusy(true);
     try {
       applyNote(await editNote(noteId, draftText));
+      savedBodyRef.current = draftText;
       setEditing(false);
+      setAutosaveState("idle");
       setToast("Not kaydedildi");
     } catch (e) {
       setToast(
         e instanceof ApiError && e.status === 409
           ? "Not kilitli — düzenlemek için önce yeniden açın."
           : "Not kaydedilemedi.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Autosave (ADR-0020): while editing a draft, persist the body ~1.5s after the
+  // last keystroke if it changed, so navigating away / refreshing never loses it.
+  useEffect(() => {
+    if (!editing || isFinal) return;
+    if (draftText === savedBodyRef.current) return;
+    setAutosaveState("saving");
+    const id = setTimeout(async () => {
+      try {
+        const updated = await editNote(noteId, draftText);
+        savedBodyRef.current = draftText;
+        // Keep the underlying note text + edited flag in sync WITHOUT leaving
+        // edit mode (the user is still typing).
+        if (typeof updated.edited === "boolean") setIsEdited(updated.edited);
+        setNote(updated.note ?? draftText);
+        setAutosaveState("saved");
+      } catch {
+        setAutosaveState("idle"); // manual Kaydet still available
+      }
+    }, 1500);
+    return () => clearTimeout(id);
+  }, [draftText, editing, isFinal, noteId]);
+
+  // --- version history (ADR-0020) ------------------------------------------
+  const openHistory = async () => {
+    setHistoryOpen(true);
+    setVersionsLoading(true);
+    try {
+      setVersions(await listNoteVersions(noteId));
+    } catch {
+      setToast("Sürüm geçmişi yüklenemedi.");
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const doRestore = async (versionId: string) => {
+    setBusy(true);
+    try {
+      applyNote(await restoreNoteVersion(noteId, versionId));
+      setHistoryOpen(false);
+      setToast("Sürüm geri yüklendi");
+    } catch (e) {
+      setToast(
+        e instanceof ApiError && e.status === 409
+          ? "Not kilitli — geri yüklemek için önce yeniden açın."
+          : "Geri yüklenemedi.",
       );
     } finally {
       setBusy(false);
@@ -537,6 +610,27 @@ export default function NoteViewer({
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
               {editing ? (
                 <>
+                  {/* Autosave status (ADR-0020) — reassures the edit is safe. */}
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    icon={
+                      autosaveState === "saving" ? (
+                        <CircularProgress size={12} thickness={6} />
+                      ) : autosaveState === "saved" ? (
+                        <CheckCircleRoundedIcon />
+                      ) : undefined
+                    }
+                    color={autosaveState === "saved" ? "success" : "default"}
+                    label={
+                      autosaveState === "saving"
+                        ? "Kaydediliyor…"
+                        : autosaveState === "saved"
+                          ? "Otomatik kaydedildi"
+                          : "Düzenleniyor"
+                    }
+                    sx={{ alignSelf: "center" }}
+                  />
                   <Button
                     variant="contained"
                     startIcon={busy ? <CircularProgress size={16} /> : <SaveRoundedIcon />}
@@ -600,6 +694,16 @@ export default function NoteViewer({
                       </Button>
                     </Tooltip>
                   )}
+                  <Tooltip title="Sürüm geçmişi">
+                    <IconButton
+                      onClick={() => void openHistory()}
+                      aria-label="Sürüm geçmişi"
+                      color="inherit"
+                      sx={{ color: "text.secondary" }}
+                    >
+                      <HistoryRoundedIcon />
+                    </IconButton>
+                  </Tooltip>
                   <Button
                     variant="outlined"
                     startIcon={<FileDownloadRoundedIcon />}
@@ -834,8 +938,76 @@ export default function NoteViewer({
         message={toast ?? ""}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
+
+      {/* Version history (ADR-0020) — view + restore prior saved bodies. */}
+      <Dialog open={historyOpen} onClose={() => setHistoryOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Sürüm geçmişi</DialogTitle>
+        <DialogContent dividers>
+          {versionsLoading ? (
+            <Stack sx={{ alignItems: "center", py: 3 }}>
+              <CircularProgress size={22} />
+            </Stack>
+          ) : versions.length === 0 ? (
+            <Typography color="text.secondary" sx={{ py: 2, textAlign: "center" }}>
+              Henüz kayıtlı bir sürüm yok. Düzenleme yaptıkça önceki hâller burada
+              birikir.
+            </Typography>
+          ) : (
+            <List dense>
+              {versions.map((v) => (
+                <ListItemButton
+                  key={v.id}
+                  alignItems="flex-start"
+                  disabled={busy || isFinal}
+                  onClick={() => void doRestore(v.id)}
+                >
+                  <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}>
+                    <RestoreRoundedIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={formatVersionDate(v.saved_at)}
+                    secondary={versionPreview(v.body)}
+                    slotProps={{
+                      secondary: {
+                        sx: {
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        },
+                      },
+                    }}
+                  />
+                </ListItemButton>
+              ))}
+            </List>
+          )}
+          {isFinal && versions.length > 0 && (
+            <Alert severity="info" sx={{ mt: 1 }}>
+              Bu not tamamlandı. Geri yüklemek için önce "Yeniden aç" deyin.
+            </Alert>
+          )}
+        </DialogContent>
+      </Dialog>
     </Stack>
   );
+}
+
+/** Turkish date for a version row. */
+function formatVersionDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** A one-line preview of a version's body (markdown markers stripped, trimmed). */
+function versionPreview(body: string): string {
+  const text = (body ?? "").replace(/[#*`_>-]/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > 90 ? text.slice(0, 90) + "…" : text || "(boş)";
 }
 
 /** Friendly display name for a model id (falls back to the raw id). */

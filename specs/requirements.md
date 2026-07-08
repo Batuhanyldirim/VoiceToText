@@ -466,6 +466,29 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## Autosave & version history (Tier 2)
+
+Editing a note should never lose work, and prior versions should be recoverable.
+*(→ ADR-0020, ADR-0015, ADR-0010)*
+
+- **REQ-147** (State) — WHILE the user is editing a draft note, THE SYSTEM SHALL
+  **autosave** the edited body a short time after they stop typing (debounced),
+  persisting it as the edit overlay (`PATCH /notes/{id}`) and showing a subtle
+  saved/saving indicator — so navigating away or a refresh never loses the edit.
+  Autosave SHALL NOT apply to a finalized note (it is locked; REQ-133). *(→
+  ADR-0020, ADR-0015)*
+- **REQ-148** (Event) — WHEN an edited note body is saved and it **differs** from
+  the currently-stored body, THE SYSTEM SHALL snapshot the prior body as a
+  **version** (id, note_id, sequence, body, saved_at) into a project-local,
+  git-ignored store, so earlier revisions are recoverable. Finalizing also
+  snapshots the finalized body. *(→ ADR-0020, ADR-0010)*
+- **REQ-149** (Event) — WHEN the user opens a note's **version history**
+  (`GET /notes/{id}/versions`), THE SYSTEM SHALL list its versions newest-first
+  (metadata + body) and let the user **restore** one (`POST /notes/{id}/restore`
+  with a version id), which sets it as the current edited body (itself snapshotting
+  the pre-restore body). The web UI SHALL show a **"Sürüm geçmişi"** affordance to
+  view and restore versions. *(→ ADR-0020)*
+
 ## Export (Tier 1)
 
 - **REQ-142** (Event) — WHEN the user exports a note, THE SYSTEM SHALL offer

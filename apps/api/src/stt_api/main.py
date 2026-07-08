@@ -732,6 +732,33 @@ def revert_note(note_id: str) -> dict:
     return _saved_note_response(saved)
 
 
+# --- version history (ADR-0020) --------------------------------------------
+
+
+class RestoreBody(BaseModel):
+    version_id: str
+
+
+@app.get("/notes/{note_id}/versions")
+def list_note_versions(note_id: str) -> dict:
+    """A note's prior saved bodies, newest first (ADR-0020). Only meaningful for a
+    persisted note; returns [] for an unknown/never-edited note."""
+    return {"versions": note_store.list_versions(note_id)}
+
+
+@app.post("/notes/{note_id}/restore")
+def restore_note_version(note_id: str, body: RestoreBody) -> dict:
+    """Restore a prior version as the current edited body. 404 if the note or
+    version is unknown, 409 if the note is finalized (reopen first)."""
+    try:
+        saved = note_store.restore_version(note_id, body.version_id)
+    except NoteLockedError as e:
+        raise HTTPException(409, str(e))
+    if not saved:
+        raise HTTPException(404, "note or version not found")
+    return _saved_note_response(saved)
+
+
 # ---------------------------------------------------------------------------
 # Patient organization (ADR-0016). A lightweight patient entity a note can be
 # filed under; browse/filter notes by patient. Patient data is PHI — same

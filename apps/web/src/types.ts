@@ -248,6 +248,15 @@ export interface NoteResult {
 /** Edit/finalize lifecycle state of a saved note (ADR-0015). */
 export type NoteLifecycle = "draft" | "final";
 
+/** One prior saved body of a note (ADR-0020). */
+export interface NoteVersion {
+  id: string;
+  note_id: string;
+  seq: number;
+  body: string;
+  saved_at: string;
+}
+
 /** A patient a note can be filed under (ADR-0016). */
 export interface Patient {
   id: string;

@@ -184,6 +184,22 @@ class NoteStore:
             # Audio-linked source transcript (ADR-0019): the turns as JSON.
             if "transcript_json" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN transcript_json TEXT")
+            # Version history (ADR-0020): a snapshot of each prior note body.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_versions (
+                    id        TEXT PRIMARY KEY,
+                    note_id   TEXT NOT NULL,
+                    seq       INTEGER NOT NULL,
+                    body      TEXT NOT NULL,
+                    saved_at  TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_note_versions_note "
+                "ON note_versions(note_id, seq)"
+            )
 
     def save(self, note: SavedNote) -> None:
         with self._connect() as conn:
@@ -264,19 +280,43 @@ class NoteStore:
     def delete(self, note_id: str) -> bool:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            # Also drop the note's version history (ADR-0020).
+            conn.execute("DELETE FROM note_versions WHERE note_id = ?", (note_id,))
         return cur.rowcount > 0
 
-    # --- edit / finalize lifecycle (ADR-0015) --------------------------------
+    # --- edit / finalize lifecycle (ADR-0015) + versioning (ADR-0020) --------
+
+    def _snapshot_version(self, conn, note_id: str, body: str) -> None:
+        """Append `body` as the next version for a note (ADR-0020). Uses the
+        passed connection so it shares the caller's transaction."""
+        import uuid
+        from datetime import datetime, timezone
+        row = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) AS m FROM note_versions WHERE note_id = ?",
+            (note_id,),
+        ).fetchone()
+        seq = (row["m"] if row else 0) + 1
+        conn.execute(
+            "INSERT INTO note_versions (id, note_id, seq, body, saved_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (uuid.uuid4().hex[:12], note_id, seq, body,
+             datetime.now(timezone.utc).isoformat()),
+        )
 
     def update_body(self, note_id: str, edited: str) -> Optional[SavedNote]:
         """Save a clinician-edited body as an overlay (never touches `note`).
-        Returns None if the note is missing; raises _Locked if it's final."""
+        Snapshots the PRIOR effective body as a version first, but only when the
+        body actually changes (so autosave no-ops don't spam versions — ADR-0020).
+        Returns None if the note is missing; raises NoteLockedError if it's final."""
         note = self.get(note_id)
         if not note:
             return None
         if note.status == "final":
             raise NoteLockedError("note is finalized; reopen it before editing")
+        if edited == note.effective_note:
+            return note  # no change — nothing to save or version
         with self._connect() as conn:
+            self._snapshot_version(conn, note_id, note.effective_note)
             conn.execute(
                 "UPDATE notes SET edited_note = ? WHERE id = ?", (edited, note_id)
             )
@@ -284,13 +324,17 @@ class NoteStore:
         return note
 
     def revert(self, note_id: str) -> Optional[SavedNote]:
-        """Clear the edit overlay so the effective body is the AI original again."""
+        """Clear the edit overlay so the effective body is the AI original again.
+        Snapshots the pre-revert body so the discarded edits stay recoverable."""
         note = self.get(note_id)
         if not note:
             return None
         if note.status == "final":
             raise NoteLockedError("note is finalized; reopen it before reverting")
+        if note.edited_note is None:
+            return note  # already the AI original — nothing to do
         with self._connect() as conn:
+            self._snapshot_version(conn, note_id, note.effective_note)
             conn.execute(
                 "UPDATE notes SET edited_note = NULL WHERE id = ?", (note_id,)
             )
@@ -298,17 +342,57 @@ class NoteStore:
         return note
 
     def set_status(self, note_id: str, status: str, finalized_at: Optional[str]) -> Optional[SavedNote]:
-        """Set draft/final + the finalize timestamp (None clears it on reopen)."""
+        """Set draft/final + the finalize timestamp (None clears it on reopen).
+        On FINALIZE, snapshots the finalized body as a version (ADR-0020)."""
         note = self.get(note_id)
         if not note:
             return None
         with self._connect() as conn:
+            if status == "final" and note.status != "final":
+                self._snapshot_version(conn, note_id, note.effective_note)
             conn.execute(
                 "UPDATE notes SET status = ?, finalized_at = ? WHERE id = ?",
                 (status, finalized_at, note_id),
             )
         note.status = status
         note.finalized_at = finalized_at
+        return note
+
+    # --- version history (ADR-0020) ------------------------------------------
+
+    def list_versions(self, note_id: str) -> list[dict]:
+        """A note's versions, newest first (metadata + body)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, note_id, seq, body, saved_at FROM note_versions "
+                "WHERE note_id = ? ORDER BY seq DESC",
+                (note_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def restore_version(self, note_id: str, version_id: str) -> Optional[SavedNote]:
+        """Set a prior version's body as the current edited body (snapshotting the
+        pre-restore body first, so restore is itself undoable). Returns None if the
+        note or version is missing; raises NoteLockedError if the note is final."""
+        note = self.get(note_id)
+        if not note:
+            return None
+        if note.status == "final":
+            raise NoteLockedError("note is finalized; reopen it before restoring")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT body FROM note_versions WHERE id = ? AND note_id = ?",
+                (version_id, note_id),
+            ).fetchone()
+            if not row:
+                return None
+            target = row["body"]
+            if target != note.effective_note:
+                self._snapshot_version(conn, note_id, note.effective_note)
+                conn.execute(
+                    "UPDATE notes SET edited_note = ? WHERE id = ?", (target, note_id)
+                )
+        note.edited_note = target
         return note
 
     # --- patient organization (ADR-0016) -------------------------------------

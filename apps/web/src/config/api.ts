@@ -13,6 +13,7 @@ import type {
   JobOptions,
   Note,
   NoteTemplatesResponse,
+  NoteVersion,
   Patient,
   ProvidersResponse,
   SavedNoteSummary,
@@ -318,6 +319,33 @@ export async function reopenNote(id: string, signal?: AbortSignal): Promise<Note
 export async function revertNote(id: string, signal?: AbortSignal): Promise<Note> {
   const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/revert`, {
     method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+// --- version history (ADR-0020) --------------------------------------------
+
+/** A note's prior saved bodies, newest first. */
+export async function listNoteVersions(
+  id: string,
+  signal?: AbortSignal,
+): Promise<NoteVersion[]> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/versions`, { signal });
+  const body = await asJson<{ versions: NoteVersion[] }>(res);
+  return body.versions ?? [];
+}
+
+/** Restore a prior version as the current edited body. */
+export async function restoreNoteVersion(
+  id: string,
+  versionId: string,
+  signal?: AbortSignal,
+): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ version_id: versionId }),
     signal,
   });
   return asJson<Note>(res);

@@ -163,6 +163,39 @@ def test_search_composes_with_patient_filter_endpoint(client):
     assert [n["id"] for n in r] == ["n1"]
 
 
+# --- autosave + version history (ADR-0020) ----------------------------------
+
+def test_versions_endpoint_and_restore(client):
+    _seed_note(client, "n1", note="AI ORIGINAL")
+    client.patch("/notes/n1", json={"note": "edit A"})
+    client.patch("/notes/n1", json={"note": "edit B"})
+    versions = client.get("/notes/n1/versions").json()["versions"]
+    assert [v["body"] for v in versions] == ["edit A", "AI ORIGINAL"]
+    # restore the oldest (AI ORIGINAL)
+    oldest = versions[-1]
+    r = client.post("/notes/n1/restore", json={"version_id": oldest["id"]})
+    assert r.status_code == 200
+    assert r.json()["note"] == "AI ORIGINAL"
+
+
+def test_versions_empty_for_unedited_note(client):
+    _seed_note(client, "n1")
+    assert client.get("/notes/n1/versions").json()["versions"] == []
+
+
+def test_restore_404_unknown_version(client):
+    _seed_note(client, "n1")
+    assert client.post("/notes/n1/restore", json={"version_id": "nope"}).status_code == 404
+
+
+def test_restore_409_when_final(client):
+    _seed_note(client, "n1", note="AI ORIGINAL")
+    client.patch("/notes/n1", json={"note": "edit A"})
+    vid = client.get("/notes/n1/versions").json()["versions"][0]["id"]
+    client.post("/notes/n1/finalize")
+    assert client.post("/notes/n1/restore", json={"version_id": vid}).status_code == 409
+
+
 # --- audio-linked source transcript (ADR-0019) ------------------------------
 
 def _seed_note_with_turns(client, note_id="n1"):

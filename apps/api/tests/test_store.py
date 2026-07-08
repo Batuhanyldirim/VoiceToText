@@ -167,6 +167,71 @@ def test_search_blank_returns_all(store):
     assert len(store.list(q="   ")) == 2
 
 
+# --- autosave + version history (ADR-0020) ----------------------------------
+
+def test_edits_snapshot_prior_body_as_versions(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    store.update_body("n1", "edit A")
+    store.update_body("n1", "edit B")
+    versions = store.list_versions("n1")
+    # newest first: snapshot of "edit A" (taken before edit B), then "AI ORIGINAL".
+    assert [v["body"] for v in versions] == ["edit A", "AI ORIGINAL"]
+    assert versions[0]["seq"] > versions[1]["seq"]
+
+
+def test_noop_save_does_not_create_version(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    store.update_body("n1", "edit A")
+    assert len(store.list_versions("n1")) == 1
+    store.update_body("n1", "edit A")  # identical → no new version
+    assert len(store.list_versions("n1")) == 1
+
+
+def test_restore_sets_body_and_is_itself_versioned(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    store.update_body("n1", "edit A")   # v: AI ORIGINAL
+    store.update_body("n1", "edit B")   # v: edit A
+    oldest = store.list_versions("n1")[-1]  # AI ORIGINAL
+    store.restore_version("n1", oldest["id"])
+    assert store.get("n1").effective_note == "AI ORIGINAL"
+    # pre-restore body ("edit B") was snapshotted → 3 versions now
+    assert len(store.list_versions("n1")) == 3
+
+
+def test_finalize_snapshots_and_restore_blocked_when_final(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    store.update_body("n1", "edit A")
+    n_before = len(store.list_versions("n1"))
+    store.set_status("n1", "final", "2026-07-08T01:00:00Z")
+    assert len(store.list_versions("n1")) == n_before + 1  # finalized body snapshotted
+    v = store.list_versions("n1")[0]
+    with pytest.raises(NoteLockedError):
+        store.restore_version("n1", v["id"])
+
+
+def test_revert_snapshots_discarded_edits(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    store.update_body("n1", "edit A")
+    store.revert("n1")
+    assert store.get("n1").effective_note == "AI ORIGINAL"
+    # both the AI-original (pre-edit) and "edit A" (pre-revert) are recoverable
+    bodies = [v["body"] for v in store.list_versions("n1")]
+    assert "edit A" in bodies and "AI ORIGINAL" in bodies
+
+
+def test_delete_removes_versions(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    store.update_body("n1", "edit A")
+    assert len(store.list_versions("n1")) == 1
+    store.delete("n1")
+    assert store.list_versions("n1") == []
+
+
+def test_restore_unknown_version_returns_none(store):
+    make_saved_note(store, "n1", note="AI ORIGINAL")
+    assert store.restore_version("n1", "no-such-version") is None
+
+
 # --- audio-linked source transcript (ADR-0019) ------------------------------
 
 def test_transcript_json_persists_and_parses(store):
