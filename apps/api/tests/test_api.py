@@ -196,6 +196,53 @@ def test_restore_409_when_final(client):
     assert client.post("/notes/n1/restore", json={"version_id": vid}).status_code == 409
 
 
+# --- problem & medication extraction (ADR-0023) -----------------------------
+
+def test_extract_endpoint(client, monkeypatch):
+    import stt_api.main as main
+    from note_core.extract import ExtractionResult
+
+    _seed_note(client, "n1", note="# Not\nHasta öksürüyor, Parol veriliyor.")
+
+    # Stub the model call so the test needs no Ollama — assert the endpoint
+    # persists whatever the extractor returns and surfaces it on GET.
+    def fake_extract(text, opts):
+        assert "öksür" in text.lower()  # runs on the effective body
+        return ExtractionResult(
+            provider="ollama", model="test",
+            problems=[{"name": "Öksürük"}],
+            medications=[{"name": "Parol", "dose": "500mg"}],
+        )
+
+    monkeypatch.setattr(main, "extract_note", fake_extract)
+    r = client.post("/notes/n1/extract")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["extracted"] is True
+    assert body["problems"] == [{"name": "Öksürük"}]
+    assert body["medications"] == [{"name": "Parol", "dose": "500mg"}]
+    # persisted: a fresh GET reflects it
+    got = client.get("/notes/n1").json()
+    assert got["problems"] == [{"name": "Öksürük"}] and got["extracted"] is True
+
+
+def test_extract_unknown_note_404(client):
+    assert client.post("/notes/nope/extract").status_code == 404
+
+
+def test_extract_provider_error_400(client, monkeypatch):
+    import stt_api.main as main
+    from note_core import ProviderError
+
+    _seed_note(client, "n1", note="body")
+
+    def boom(text, opts):
+        raise ProviderError("Ollama unreachable")
+
+    monkeypatch.setattr(main, "extract_note", boom)
+    assert client.post("/notes/n1/extract").status_code == 400
+
+
 # --- custom note templates (ADR-0021) --------------------------------------
 
 def test_custom_template_crud(client):

@@ -42,13 +42,24 @@ import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
 import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
+import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
+import AutoFixHighRoundedIcon from "@mui/icons-material/AutoFixHighRounded";
 import PatientSelector from "./PatientSelector";
 import { markdownToPlainText, printNoteAsPdf } from "../utils/noteExport";
-import type { Note, NoteSSEPayload, NoteStage, NoteVersion, Turn } from "../types";
+import type {
+  Medication,
+  Note,
+  NoteSSEPayload,
+  NoteStage,
+  NoteVersion,
+  Problem,
+  Turn,
+} from "../types";
 import SourceTranscript from "./SourceTranscript";
 import {
   ApiError,
   editNote,
+  extractNote,
   finalizeNote,
   getNote,
   listNoteVersions,
@@ -143,6 +154,11 @@ export default function NoteViewer({
   // Encounter metadata (ADR-0022).
   const [visitType, setVisitType] = useState<string | null>(null);
   const [chiefComplaint, setChiefComplaint] = useState<string | null>(null);
+  // Extracted problem/medication lists (ADR-0023).
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [medications, setMedications] = useState<Medication[]>([]);
+  const [extracted, setExtracted] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -197,6 +213,9 @@ export default function NoteViewer({
       setHasAudio(Boolean(job.has_audio));
       setVisitType(job.visit_type ?? null);
       setChiefComplaint(job.chief_complaint ?? null);
+      if (Array.isArray(job.problems)) setProblems(job.problems);
+      if (Array.isArray(job.medications)) setMedications(job.medications);
+      setExtracted(Boolean(job.extracted));
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -457,6 +476,24 @@ export default function NoteViewer({
     }, 1500);
     return () => clearTimeout(id);
   }, [draftText, editing, isFinal, noteId]);
+
+  // --- problem/medication extraction (ADR-0023) ----------------------------
+  const doExtract = async () => {
+    setExtracting(true);
+    try {
+      const n = await extractNote(noteId);
+      setProblems(Array.isArray(n.problems) ? n.problems : []);
+      setMedications(Array.isArray(n.medications) ? n.medications : []);
+      setExtracted(Boolean(n.extracted));
+      setToast("Sorunlar ve ilaçlar çıkarıldı");
+    } catch (e) {
+      setToast(
+        e instanceof ApiError ? e.message : "Çıkarım başarısız oldu.",
+      );
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   // --- version history (ADR-0020) ------------------------------------------
   const openHistory = async () => {
@@ -928,6 +965,81 @@ export default function NoteViewer({
                 </Stack>
                 <Divider sx={{ mb: 1.5 }} />
                 <Markdown stripFirstHeading>{review}</Markdown>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Extracted problem + medication lists (ADR-0023). */}
+          {!editing && (
+            <Card>
+              <CardContent>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ alignItems: "center", justifyContent: "space-between", mb: 1, flexWrap: "wrap" }}
+                >
+                  <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                    <MedicationRoundedIcon fontSize="small" color="primary" />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                      Sorunlar ve İlaçlar
+                    </Typography>
+                  </Stack>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={extracting ? <CircularProgress size={14} /> : <AutoFixHighRoundedIcon />}
+                    onClick={() => void doExtract()}
+                    disabled={extracting}
+                  >
+                    {extracted ? "Yeniden çıkar" : "Çıkar"}
+                  </Button>
+                </Stack>
+                <Divider sx={{ mb: 1.5 }} />
+                {!extracted ? (
+                  <Typography color="text.secondary" variant="body2">
+                    Bu nottan sorun ve ilaç listesini otomatik çıkarmak için "Çıkar".
+                  </Typography>
+                ) : (
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={3}>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                        Sorunlar
+                      </Typography>
+                      {problems.length === 0 ? (
+                        <Typography variant="body2" color="text.secondary">Belirtilmemiş.</Typography>
+                      ) : (
+                        <Stack component="ul" sx={{ m: 0, pl: 2.5 }} spacing={0.25}>
+                          {problems.map((p, i) => (
+                            <Typography component="li" variant="body2" key={i}>
+                              {p.name}
+                              {p.status ? ` — ${p.status}` : ""}
+                              {p.detail ? ` (${p.detail})` : ""}
+                            </Typography>
+                          ))}
+                        </Stack>
+                      )}
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                        İlaçlar
+                      </Typography>
+                      {medications.length === 0 ? (
+                        <Typography variant="body2" color="text.secondary">Belirtilmemiş.</Typography>
+                      ) : (
+                        <Stack component="ul" sx={{ m: 0, pl: 2.5 }} spacing={0.25}>
+                          {medications.map((m, i) => (
+                            <Typography component="li" variant="body2" key={i}>
+                              {m.name}
+                              {[m.dose, m.route, m.frequency].filter(Boolean).length
+                                ? ` — ${[m.dose, m.route, m.frequency].filter(Boolean).join(", ")}`
+                                : ""}
+                            </Typography>
+                          ))}
+                        </Stack>
+                      )}
+                    </Box>
+                  </Stack>
+                )}
               </CardContent>
             </Card>
           )}

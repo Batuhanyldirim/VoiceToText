@@ -466,6 +466,32 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## Problem & medication extraction (Tier 3)
+
+Turn a finished note into a structured **problem list** and **medication list** so
+the note is queryable, not just free text. Extraction runs through the same
+pluggable AI provider as note generation (local Ollama by default; PHI stays
+on-device). *(→ ADR-0023, ADR-0009, ADR-0010)*
+
+- **REQ-156** (Event) — WHEN the user requests extraction for a note
+  (`POST /notes/{id}/extract`), THE SYSTEM SHALL derive, via the configured
+  provider, a **problem list** (each: name; optional status/detail) and a
+  **medication list** (each: name; optional dose, route, frequency), in **Turkish**,
+  grounded ONLY in the note (no invented items), and persist them on the note. *(→
+  ADR-0023, ADR-0009)*
+- **REQ-157** (Ubiquitous) — THE SYSTEM SHALL run extraction through the same
+  provider seam/gating as note generation (local default; off-device only when the
+  operator opted in), returning **strict, parseable structured output** and
+  degrading safely (empty lists) if the model returns nothing usable — never
+  fabricating clinical items. *(→ ADR-0023, ADR-0009)*
+- **REQ-158** (Event) — WHEN a note has extracted lists, THE SYSTEM SHALL surface
+  them on `GET /notes/{id}` (and whether extraction has been run), and the web UI
+  SHALL show **"Sorunlar"** and **"İlaçlar"** panels with a **re-extract** action.
+  Extraction SHALL be re-runnable and overwrite the prior lists. *(→ ADR-0023)*
+- **REQ-159** (Event) — WHEN a note is deleted, THE SYSTEM SHALL discard its
+  extracted lists along with it (they live on the note row, PHI, git-ignored). *(→
+  ADR-0023, ADR-0010)*
+
 ## Encounter metadata (Tier 2)
 
 Capture a little structured context **up front** at note creation — the patient,

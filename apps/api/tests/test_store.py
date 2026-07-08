@@ -167,6 +167,50 @@ def test_search_blank_returns_all(store):
     assert len(store.list(q="   ")) == 2
 
 
+# --- problem & medication extraction (ADR-0023) -----------------------------
+
+def test_set_extraction_persists_and_parses(store):
+    make_saved_note(store, "n1")
+    assert store.get("n1").extracted is False
+    store.set_extraction(
+        "n1",
+        [{"name": "Öksürük", "status": "aktif"}],
+        [{"name": "Parol", "dose": "500mg"}],
+    )
+    n = store.get("n1")
+    assert n.extracted is True
+    assert n.problems == [{"name": "Öksürük", "status": "aktif"}]
+    assert n.medications == [{"name": "Parol", "dose": "500mg"}]
+
+
+def test_set_extraction_overwrites(store):
+    make_saved_note(store, "n1")
+    store.set_extraction("n1", [{"name": "A"}], [{"name": "X"}])
+    store.set_extraction("n1", [{"name": "B"}], [])
+    n = store.get("n1")
+    assert n.problems == [{"name": "B"}] and n.medications == []
+
+
+def test_set_extraction_missing_note_returns_none(store):
+    assert store.set_extraction("nope", [], []) is None
+
+
+def test_extraction_parser_fail_closed():
+    """note_core.parse_extraction never fabricates; garbage → empty lists."""
+    import sys
+    sys.path.insert(0, "packages/note-core/src")
+    from note_core.extract import parse_extraction
+
+    assert parse_extraction("üzgünüm, liste yok") == ([], [])
+    assert parse_extraction("") == ([], [])
+    # fenced + prose is tolerated
+    p, m = parse_extraction('```json\n{"problems":[{"name":"Migren"}],"medications":[]}\n```')
+    assert p == [{"name": "Migren"}] and m == []
+    # malformed entries (no name) are dropped
+    p, _ = parse_extraction('{"problems":[{"detail":"x"},{"name":"OK"}],"medications":[]}')
+    assert p == [{"name": "OK"}]
+
+
 # --- encounter metadata (ADR-0022) ------------------------------------------
 
 def test_encounter_metadata_persists_and_lists(store):

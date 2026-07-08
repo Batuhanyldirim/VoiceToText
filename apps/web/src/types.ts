@@ -308,6 +308,25 @@ export interface Note {
   // Audio-linked source transcript (ADR-0019).
   turns?: Turn[];
   has_audio?: boolean;
+  // Extracted structured lists (ADR-0023).
+  problems?: Problem[];
+  medications?: Medication[];
+  extracted?: boolean;
+}
+
+/** An extracted problem-list entry (ADR-0023). */
+export interface Problem {
+  name: string;
+  status?: string;
+  detail?: string;
+}
+
+/** An extracted medication-list entry (ADR-0023). */
+export interface Medication {
+  name: string;
+  dose?: string;
+  route?: string;
+  frequency?: string;
 }
 
 /**

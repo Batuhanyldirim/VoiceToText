@@ -10,6 +10,7 @@ provider behind an explicit server env flag. Parallels stt_core: a pure
 
 See specs/ (ADR-0009, REQ-100+) for the contract and the PHI rationale.
 """
+from .extract import ExtractionResult, extract, parse_extraction
 from .generate import EmptyTranscriptError, generate
 from .models import NoteOptions, NoteResult
 from .progress import STAGES, NoteEvent
@@ -18,6 +19,9 @@ from .templates import TEMPLATE_CHOICES
 
 __all__ = [
     "generate",
+    "extract",
+    "parse_extraction",
+    "ExtractionResult",
     "NoteOptions",
     "NoteResult",
     "NoteEvent",

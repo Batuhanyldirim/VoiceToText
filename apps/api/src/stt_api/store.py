@@ -25,6 +25,18 @@ DB_PATH = Path(
 )
 
 
+def _parse_json_list(raw: Optional[str]) -> list:
+    """Parse a JSON-array column to a list, or [] on absent/invalid/non-list."""
+    if not raw:
+        return []
+    import json
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
 @dataclass
 class SavedNote:
     id: str
@@ -54,6 +66,9 @@ class SavedNote:
     # Encounter metadata captured up front (ADR-0022). Both optional/free-text.
     visit_type: Optional[str] = None
     chief_complaint: Optional[str] = None
+    # Extracted structured lists as JSON strings (ADR-0023). NULL = not extracted.
+    problems_json: Optional[str] = None
+    medications_json: Optional[str] = None
 
     @property
     def effective_note(self) -> str:
@@ -67,14 +82,22 @@ class SavedNote:
     @property
     def turns(self) -> list:
         """The source transcript turns (parsed from transcript_json), or []."""
-        if not self.transcript_json:
-            return []
-        import json
-        try:
-            data = json.loads(self.transcript_json)
-            return data if isinstance(data, list) else []
-        except (ValueError, TypeError):
-            return []
+        return _parse_json_list(self.transcript_json)
+
+    @property
+    def problems(self) -> list:
+        """Extracted problem list (parsed from problems_json), or [] (ADR-0023)."""
+        return _parse_json_list(self.problems_json)
+
+    @property
+    def medications(self) -> list:
+        """Extracted medication list (parsed from medications_json), or []."""
+        return _parse_json_list(self.medications_json)
+
+    @property
+    def extracted(self) -> bool:
+        """Whether problem/medication extraction has been run (either list stored)."""
+        return self.problems_json is not None or self.medications_json is not None
 
     def summary(self) -> dict:
         """List-view shape (no heavy transcript/note bodies)."""
@@ -194,6 +217,11 @@ class NoteStore:
                 conn.execute("ALTER TABLE notes ADD COLUMN visit_type TEXT")
             if "chief_complaint" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN chief_complaint TEXT")
+            # Extracted problem/medication lists (ADR-0023), JSON strings.
+            if "problems_json" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN problems_json TEXT")
+            if "medications_json" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN medications_json TEXT")
             # Version history (ADR-0020): a snapshot of each prior note body.
             conn.execute(
                 """
@@ -230,14 +258,15 @@ class NoteStore:
                     (id, created_at, title, source_name, provider, model, template,
                      transcript, note, transcribe_seconds, note_seconds,
                      edited_note, status, finalized_at, patient_id, transcript_json,
-                     visit_type, chief_complaint)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     visit_type, chief_complaint, problems_json, medications_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
                  note.transcribe_seconds, note.note_seconds,
                  note.edited_note, note.status, note.finalized_at, note.patient_id,
-                 note.transcript_json, note.visit_type, note.chief_complaint),
+                 note.transcript_json, note.visit_type, note.chief_complaint,
+                 note.problems_json, note.medications_json),
             )
 
     def list(self, patient_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
@@ -384,6 +413,24 @@ class NoteStore:
             )
         note.status = status
         note.finalized_at = finalized_at
+        return note
+
+    def set_extraction(self, note_id: str, problems: list, medications: list) -> Optional[SavedNote]:
+        """Persist extracted problem/medication lists on a note (ADR-0023).
+        Overwrites any prior extraction. Returns None if the note is missing."""
+        import json
+        note = self.get(note_id)
+        if not note:
+            return None
+        pj = json.dumps(problems or [], ensure_ascii=False)
+        mj = json.dumps(medications or [], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET problems_json = ?, medications_json = ? WHERE id = ?",
+                (pj, mj, note_id),
+            )
+        note.problems_json = pj
+        note.medications_json = mj
         return note
 
     # --- version history (ADR-0020) ------------------------------------------

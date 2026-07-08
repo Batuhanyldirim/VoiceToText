@@ -24,7 +24,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from note_core import NoteOptions, TEMPLATE_CHOICES, list_providers
+from note_core import NoteOptions, TEMPLATE_CHOICES, extract as extract_note, list_providers
+from note_core import ProviderError
 from note_core.progress import NoteEvent
 from stt_core import TranscribeOptions
 from stt_core.progress import ProgressEvent
@@ -668,6 +669,10 @@ def _saved_note_response(saved) -> dict:
         # Encounter metadata (ADR-0022).
         "visit_type": saved.visit_type,
         "chief_complaint": saved.chief_complaint,
+        # Extracted structured lists (ADR-0023).
+        "problems": saved.problems,
+        "medications": saved.medications,
+        "extracted": saved.extracted,
         # Audio-linked source transcript (ADR-0019): the turns + whether the
         # source recording is available at GET /notes/{id}/audio.
         "turns": saved.turns,
@@ -801,6 +806,34 @@ def revert_note(note_id: str) -> dict:
     if not saved:
         raise HTTPException(404, "note not found")
     return _saved_note_response(saved)
+
+
+# --- problem & medication extraction (ADR-0023) ----------------------------
+
+
+@app.post("/notes/{note_id}/extract")
+def extract_note_lists(note_id: str) -> dict:
+    """Extract a structured problem + medication list from the note's EFFECTIVE
+    body via the configured provider (local default), persist, and return the
+    updated note. Sync (a single short generation) — FastAPI runs `def` handlers
+    in a threadpool so the event loop isn't blocked. Re-runnable (overwrites).
+    Allowed on draft or final (extraction is derived metadata, not the body)."""
+    saved = note_store.get(note_id)
+    if not saved:
+        raise HTTPException(404, "note not found")
+    # Same provider gating/resolution as note generation (ADR-0009): default
+    # local; off-device only if the operator opted in.
+    opts = NoteOptions(provider=_note_provider())
+    try:
+        result = extract_note(saved.effective_note, opts)
+    except ProviderError as e:
+        # Provider-level failure (unreachable/misconfigured/cloud-not-opted-in) —
+        # surface a clean 4xx; no data was sent when the cloud path is refused.
+        raise HTTPException(400, str(e))
+    updated = note_store.set_extraction(note_id, result.problems, result.medications)
+    if not updated:
+        raise HTTPException(404, "note not found")
+    return _saved_note_response(updated)
 
 
 # --- version history (ADR-0020) --------------------------------------------

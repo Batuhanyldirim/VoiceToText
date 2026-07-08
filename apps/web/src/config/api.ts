@@ -325,6 +325,16 @@ export async function revertNote(id: string, signal?: AbortSignal): Promise<Note
   return asJson<Note>(res);
 }
 
+/** Extract structured problem + medication lists from a note (ADR-0023).
+ *  Synchronous on the server (one short generation); returns the updated note. */
+export async function extractNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/extract`, {
+    method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
 // --- custom note templates (ADR-0021) --------------------------------------
 
 /** List the user's custom note templates. */
