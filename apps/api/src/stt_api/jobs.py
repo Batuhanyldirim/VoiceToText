@@ -70,6 +70,14 @@ class JobManager:
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
 
+    def source_audio_path(self, job_id: str) -> Optional[Path]:
+        """The uploaded/recorded source audio for a job, if still on disk
+        (ADR-0019 — copied into the note audio store when a note is generated)."""
+        job = self._jobs.get(job_id)
+        if job and job.input_path and Path(job.input_path).is_file():
+            return Path(job.input_path)
+        return None
+
     def list_active(self) -> list[dict]:
         """Summaries of jobs that aren't finished successfully — i.e. still
         queued/running or failed (retryable). `done` jobs are excluded (their

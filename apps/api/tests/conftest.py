@@ -38,17 +38,23 @@ def client(tmp_path: Path):
     from fastapi.testclient import TestClient
 
     import stt_api.main as main
-    from stt_api.store import NoteStore  # single, canonical class identity
+    from stt_api.store import NoteAudioStore, NoteStore  # canonical class identities
 
     temp_db = tmp_path / "notes.db"
     main.note_store = NoteStore(temp_db)
-    # The note manager persists completed notes through the store — point it at
-    # the temp store too so any (future) generation test can't escape.
+    # Point the note-audio store at a temp dir too (never the real note_audio/).
+    main.note_audio_store = NoteAudioStore(tmp_path / "note_audio")
+    # The note manager persists completed notes + audio through these — point it
+    # at the temp instances so any generation test can't escape to real data.
     main.note_manager._store = main.note_store
+    main.note_manager._audio_store = main.note_audio_store
 
     # Belt-and-suspenders: refuse to run if we're somehow on a real project DB.
     assert str(tmp_path) in str(main.note_store.db_path), (
         f"test store escaped to {main.note_store.db_path!r} — refusing to run"
+    )
+    assert str(tmp_path) in str(main.note_audio_store.audio_dir), (
+        f"test audio store escaped to {main.note_audio_store.audio_dir!r}"
     )
 
     with TestClient(main.app) as c:

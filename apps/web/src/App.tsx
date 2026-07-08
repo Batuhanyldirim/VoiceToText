@@ -479,6 +479,11 @@ export default function App() {
                 transcript={view.transcript}
                 sourceName={file?.name ?? undefined}
                 transcribeSeconds={view.result.transcribe_seconds ?? null}
+                // Persist the structured turns + link the source audio (ADR-0019).
+                // jobId is the originating transcription job id, or the streamId
+                // for a live-stream result — both resolve to on-disk source audio.
+                turns={view.result.turns ?? undefined}
+                audioSourceId={view.jobId}
                 onGenerating={handleNoteStarted}
                 onBack={handleBackToTranscript}
               />

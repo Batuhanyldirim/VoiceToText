@@ -161,3 +161,62 @@ def test_search_composes_with_patient_filter_endpoint(client):
     client.put("/notes/n1/patient", json={"patient_id": pid})
     r = client.get("/notes", params={"q": "öksürük", "patient_id": pid}).json()["notes"]
     assert [n["id"] for n in r] == ["n1"]
+
+
+# --- audio-linked source transcript (ADR-0019) ------------------------------
+
+def _seed_note_with_turns(client, note_id="n1"):
+    import json
+    import stt_api.main as main
+    from stt_api.store import SavedNote
+
+    turns = [
+        {"speaker": "Speaker 1", "text": "merhaba", "start": 0.0, "end": 1.0},
+        {"speaker": "Speaker 2", "text": "iyi günler", "start": 1.0, "end": 2.0},
+    ]
+    main.note_store.save(SavedNote(
+        id=note_id, created_at="2026-07-08T00:00:00Z", title="Test", source_name=None,
+        provider="ollama", model="q", template="soap", transcript="tx", note="# Not",
+        transcript_json=json.dumps(turns),
+    ))
+    return turns
+
+
+def test_get_note_returns_turns_and_has_audio_flag(client):
+    turns = _seed_note_with_turns(client, "n1")
+    body = client.get("/notes/n1").json()
+    assert body["turns"] == turns
+    assert body["has_audio"] is False  # no audio stored yet
+
+
+def test_note_audio_404_when_absent(client):
+    _seed_note_with_turns(client, "n1")
+    assert client.get("/notes/n1/audio").status_code == 404
+
+
+def test_note_audio_served_and_deleted_with_note(client):
+    import stt_api.main as main
+    _seed_note_with_turns(client, "n1")
+    # Place a source audio file via the (temp) audio store, as the worker would.
+    src = main.note_audio_store.audio_dir.parent / "src.wav"
+    src.write_bytes(b"RIFF0000WAVEfake-audio-bytes")
+    main.note_audio_store.save_from("n1", src)
+
+    # has_audio now true; the audio streams
+    assert client.get("/notes/n1").json()["has_audio"] is True
+    r = client.get("/notes/n1/audio")
+    assert r.status_code == 200
+    assert r.content == b"RIFF0000WAVEfake-audio-bytes"
+    assert "audio/wav" in r.headers.get("content-type", "")
+
+    # deleting the note removes the audio too
+    assert client.delete("/notes/n1").status_code == 200
+    assert main.note_audio_store.path("n1") is None
+    assert client.get("/notes/n1/audio").status_code == 404
+
+
+def test_notes_without_turns_have_empty_turns(client):
+    _seed_note(client, "n1", note="# Not")  # no transcript_json
+    body = client.get("/notes/n1").json()
+    assert body["turns"] == []
+    assert body["has_audio"] is False

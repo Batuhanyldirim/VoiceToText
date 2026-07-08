@@ -31,7 +31,7 @@ from stt_core.progress import ProgressEvent
 
 from .jobs import JobManager
 from .notes import NoteJobManager
-from .store import NoteLockedError, NoteStore
+from .store import NoteAudioStore, NoteLockedError, NoteStore
 from .stream import StreamManager
 
 # --- Logging: surface our job/note lifecycle INFO lines, and quiet the known,
@@ -73,7 +73,23 @@ stream_manager = StreamManager(JOBS_ROOT)
 # Durable note history (SQLite, project-local, git-ignored — ADR-0003). The
 # worker persists completed notes here; the /notes history endpoints read it.
 note_store = NoteStore()
-note_manager = NoteJobManager(store=note_store)
+# Durable, note-keyed source-audio store (ADR-0019, git-ignored). The note worker
+# copies a note's source recording here so it survives job-scratch cleanup.
+note_audio_store = NoteAudioStore()
+
+
+def _resolve_source_audio(source_id: str):
+    """Map a POST /notes audio_source_id (an upload/recording job id, or a stream
+    id) to the on-disk source audio, if still present. Used by the note worker to
+    copy it into the durable audio store (ADR-0019)."""
+    return manager.source_audio_path(source_id) or stream_manager.source_audio_path(source_id)
+
+
+note_manager = NoteJobManager(
+    store=note_store,
+    audio_store=note_audio_store,
+    audio_resolver=_resolve_source_audio,
+)
 
 # CLI/pipeline transcripts live in repo_root/out/*.json. From
 # apps/api/src/stt_api/main.py that's parents[4] (stt_api -> src -> api -> apps -> root).
@@ -456,6 +472,11 @@ class NoteRequest(BaseModel):
     # How long the source transcription took (carried from the chosen transcript
     # or the just-finished job) so the note can report both timings.
     transcribe_seconds: Optional[float] = None
+    # Audio-linked source transcript (ADR-0019): the structured turns to persist
+    # for the "Kaynak deşifre" panel, and the originating job/stream id whose audio
+    # to copy into the durable store. Both optional (reused transcripts have neither).
+    transcript_json: Optional[list] = None
+    audio_source_id: Optional[str] = None
 
 
 @app.get("/notes")
@@ -531,10 +552,17 @@ async def create_note(body: NoteRequest) -> dict:
         template=body.template,
         template_text=body.template_text,
     )
+    # Serialize the structured turns for persistence (ADR-0019), if provided.
+    transcript_json = (
+        json.dumps(body.transcript_json, ensure_ascii=False)
+        if body.transcript_json else None
+    )
     job = note_manager.register(
         body.transcript, opts,
         title=body.title, source_name=body.source_name,
         transcribe_seconds=body.transcribe_seconds,
+        transcript_json=transcript_json,
+        audio_source_id=body.audio_source_id,
     )
     note_manager.submit(job)
     return {"note_id": job.id, "status": job.status}
@@ -569,6 +597,10 @@ def _saved_note_response(saved) -> dict:
         "finalized_at": saved.finalized_at,
         "patient_id": saved.patient_id,
         "patient_name": note_store.patient_name(saved.patient_id),
+        # Audio-linked source transcript (ADR-0019): the turns + whether the
+        # source recording is available at GET /notes/{id}/audio.
+        "turns": saved.turns,
+        "has_audio": note_audio_store.path(saved.id) is not None,
         "result": {
             "note": saved.effective_note,
             "provider": saved.provider,
@@ -612,12 +644,30 @@ def get_note(note_id: str) -> dict:
     raise HTTPException(404, "note not found")
 
 
+@app.get("/notes/{note_id}/audio")
+def get_note_audio(note_id: str):
+    """Stream a note's stored source recording (ADR-0019). FileResponse supports
+    range requests, so the browser <audio> element can seek. 404 if the note has
+    no stored audio (reused transcript / cleaned before this feature)."""
+    path = note_audio_store.path(note_id)
+    if not path:
+        raise HTTPException(404, "no audio for this note")
+    ext = path.suffix.lower()
+    media = {
+        ".wav": "audio/wav", ".webm": "audio/webm", ".ogg": "audio/ogg",
+        ".mp4": "audio/mp4", ".m4a": "audio/mp4", ".mp3": "audio/mpeg",
+        ".flac": "audio/flac", ".aac": "audio/aac",
+    }.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=media)
+
+
 @app.delete("/notes/{note_id}")
 def delete_note(note_id: str) -> dict:
     """Delete a note from durable history (and drop it from the in-memory
     manager if still present). 404 if neither had it."""
     in_memory = note_manager.discard(note_id)
     in_store = note_store.delete(note_id)
+    note_audio_store.delete(note_id)  # also drop the linked source audio (ADR-0019)
     if not in_memory and not in_store:
         raise HTTPException(404, "note not found")
     return {"deleted": True}

@@ -25,6 +25,7 @@ import type {
   NoteTemplate,
   ProviderInfo,
   TranscriptInfo,
+  Turn,
 } from "../types";
 import {
   createNote,
@@ -67,6 +68,11 @@ interface NoteGeneratorProps {
   /** How long the pre-loaded transcript took to transcribe (fresh-transcription
    *  flow), carried into the note so it can show both timings. */
   transcribeSeconds?: number | null;
+  /** Structured source turns (ADR-0019) — persisted with the note for the
+   *  "Kaynak deşifre" panel. Present in the transcription flow. */
+  turns?: Turn[];
+  /** The originating job/stream id whose source audio to link (ADR-0019). */
+  audioSourceId?: string;
   onGenerating: (noteId: string) => void;
   onBack: () => void;
   /** Route back to the upload flow (for the "new file" source option). */
@@ -77,6 +83,8 @@ export default function NoteGenerator({
   transcript,
   sourceName,
   transcribeSeconds,
+  turns,
+  audioSourceId,
   onGenerating,
   onBack,
   onNeedTranscript,
@@ -257,6 +265,10 @@ export default function NoteGenerator({
     if (effectiveSource) body.source_name = effectiveSource;
     if (typeof effectiveSeconds === "number") body.transcribe_seconds = effectiveSeconds;
     if (isFree) body.template_text = templateText;
+    // Audio-linked source transcript (ADR-0019) — only present in the
+    // transcription flow (preloaded); reused out/ transcripts have no live audio.
+    if (turns && turns.length > 0) body.transcript_json = turns;
+    if (audioSourceId) body.audio_source_id = audioSourceId;
     try {
       const { note_id } = await createNote(body);
       onGenerating(note_id);
@@ -279,6 +291,8 @@ export default function NoteGenerator({
     templateText,
     provider,
     model,
+    turns,
+    audioSourceId,
     onGenerating,
   ]);
 

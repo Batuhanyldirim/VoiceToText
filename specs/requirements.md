@@ -436,6 +436,36 @@ list keeps working while patient grouping layers on top. *(→ ADR-0016, ADR-001
   The web sidebar SHALL provide a **search box** ("Notlarda ara…") that narrows
   the list as the user types. *(→ ADR-0018, ADR-0016)*
 
+## Audio-linked source transcript
+
+A generated note can carry its **source transcript** (the speaker-labeled turns
+with timestamps) and, when available, the **source audio recording** — so a
+clinician who sees an ambiguous or likely-mis-transcribed passage can click that
+turn and **hear the original audio** at that moment. This makes the note
+verifiable against the recording without leaving the note page. PHI stays local.
+*(→ ADR-0019, ADR-0010, ADR-0003)*
+
+- **REQ-143** (Event) — WHEN a note is generated from a transcription result that
+  has structured turns, THE SYSTEM SHALL persist those **turns (speaker, text,
+  start, end)** alongside the note (`transcript_json`) and surface them on
+  `GET /notes/{id}`, so the source transcript can be shown on the note page.
+  *(→ ADR-0019, ADR-0010)*
+- **REQ-144** (Event) — WHEN a note is generated from a fresh upload/recording or
+  a live stream whose **source audio is still on disk**, THE SYSTEM SHALL copy
+  that audio into a durable, note-keyed, **git-ignored** project-local store
+  (`note_audio/<note_id>.<ext>`) at note-persist time and serve it at
+  `GET /notes/{id}/audio`, so it survives the job scratch being cleaned. *(→
+  ADR-0019, ADR-0003)*
+- **REQ-145** (State) — WHILE viewing a saved note that has a source transcript,
+  THE web UI SHALL show a **"Kaynak deşifre"** panel listing the turns; IF the
+  note also has source audio, THEN each turn SHALL be **clickable to seek/play**
+  that moment in an embedded player; IF there is no audio (e.g. a reused
+  transcript or an older note), THEN the panel SHALL still show the transcript and
+  simply omit the player. *(→ ADR-0019)*
+- **REQ-146** (Event) — WHEN a note is deleted, THE SYSTEM SHALL also remove its
+  stored source audio, keeping the one-command `rm -rf` cleanup and never
+  committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
+
 ## Export (Tier 1)
 
 - **REQ-142** (Event) — WHEN the user exports a note, THE SYSTEM SHALL offer

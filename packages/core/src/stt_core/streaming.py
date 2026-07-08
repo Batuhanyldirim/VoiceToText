@@ -254,6 +254,22 @@ class StreamingTranscriber:
             segments=segments,
         )
 
+    def write_wav(self, path) -> None:
+        """Write the full accumulated audio to a 16 kHz mono 16-bit WAV. Used by
+        the API to persist a streamed recording's source audio (ADR-0019) so a
+        note generated from it can link/playback the audio. Pure stdlib `wave`."""
+        import wave
+        from pathlib import Path as _Path
+
+        _Path(path).parent.mkdir(parents=True, exist_ok=True)
+        pcm16 = np.clip(self._audio, -1.0, 1.0)
+        pcm16 = (pcm16 * 32767.0).astype("<i2")
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(pcm16.tobytes())
+
     @property
     def live_text(self) -> str:
         """The transcript accumulated so far (for a late-joining client)."""

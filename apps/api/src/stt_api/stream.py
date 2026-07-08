@@ -223,6 +223,12 @@ class StreamManager:
             emit.write_txt(result, session.out_dir)
             emit.write_srt(result, session.out_dir)
             emit.write_json(result, session.out_dir)
+            # Persist the recorded audio as a WAV so a note generated from this
+            # stream can link + play it back (ADR-0019). Best-effort.
+            try:
+                st.write_wav(session.out_dir / "recording.wav")
+            except Exception:  # noqa: BLE001 - audio persist must not fail the run
+                log.warning("stream %s: could not write recording.wav", session.id)
             session.transcribe_seconds = result.transcribe_seconds
             session.result = result.to_dict()
             session.live_text = "\n".join(
@@ -247,3 +253,12 @@ class StreamManager:
         stem = Path(session.original_name).stem or "kayit"
         path = session.out_dir / f"{stem}.{fmt}"
         return path if path.is_file() else None
+
+    def source_audio_path(self, sid: str) -> Optional[Path]:
+        """The persisted recording.wav for a finished stream, if present
+        (ADR-0019 — copied into the note audio store when a note is generated)."""
+        session = self._sessions.get(sid)
+        if not session:
+            return None
+        wav = session.out_dir / "recording.wav"
+        return wav if wav.is_file() else None

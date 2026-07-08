@@ -55,6 +55,10 @@ class NoteJob:
     source_name: Optional[str] = None  # transcript stem / uploaded name, if any
     transcribe_seconds: Optional[float] = None  # carried from the source transcript
     note_seconds: Optional[float] = None        # wall-clock note generation time
+    # Audio-linked source transcript (ADR-0019): the turns JSON to persist, and
+    # the originating job/stream id whose on-disk audio we copy at persist time.
+    transcript_json: Optional[str] = None
+    audio_source_id: Optional[str] = None
     created_at: str = ""             # UTC ISO-8601, set at registration
     started_at: Optional[float] = None  # epoch seconds at _run start (anchors the UI timer)
     # asyncio primitives, set when the job is submitted (bound to the running loop)
@@ -79,13 +83,19 @@ class NoteJob:
 
 
 class NoteJobManager:
-    def __init__(self, store=None) -> None:
+    def __init__(self, store=None, audio_store=None, audio_resolver=None) -> None:
         self._jobs: dict[str, NoteJob] = {}
         self._executor = ThreadPoolExecutor(max_workers=1)
         # Optional NoteStore — the worker persists completed notes into it. Kept
         # as a constructor arg so main.py owns the single instance and tests can
         # inject their own (or None to skip persistence).
         self._store = store
+        # Audio-linked source transcript (ADR-0019): an optional NoteAudioStore
+        # and a resolver `audio_source_id -> Optional[Path]` (main.py wires it to
+        # the job/stream managers). When both are present and a job carries an
+        # audio_source_id, the worker copies that source audio into the store.
+        self._audio_store = audio_store
+        self._audio_resolver = audio_resolver
 
     def get(self, note_id: str) -> Optional[NoteJob]:
         return self._jobs.get(note_id)
@@ -124,6 +134,8 @@ class NoteJobManager:
         title: Optional[str] = None,
         source_name: Optional[str] = None,
         transcribe_seconds: Optional[float] = None,
+        transcript_json: Optional[str] = None,
+        audio_source_id: Optional[str] = None,
     ) -> NoteJob:
         note_id = uuid.uuid4().hex[:12]
         if not title:
@@ -136,6 +148,8 @@ class NoteJobManager:
             title=title,
             source_name=source_name,
             transcribe_seconds=transcribe_seconds,
+            transcript_json=transcript_json,
+            audio_source_id=audio_source_id,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[note_id] = job
@@ -195,7 +209,8 @@ class NoteJobManager:
                           time.monotonic() - t0, job.error)
 
     def _persist(self, job: NoteJob, note: str) -> None:
-        """Save a completed note to the store (best-effort; never raises)."""
+        """Save a completed note to the store (best-effort; never raises), then
+        copy its source audio into the audio store if available (ADR-0019)."""
         if self._store is None:
             return
         try:
@@ -213,10 +228,26 @@ class NoteJobManager:
                 note=note,
                 transcribe_seconds=job.transcribe_seconds,
                 note_seconds=job.note_seconds,
+                transcript_json=job.transcript_json,
             ))
             log.info("note %s PERSISTED to store", job.id)
         except Exception as e:  # noqa: BLE001 - persistence must not kill the job
             log.warning("note %s persist FAILED: %s: %s", job.id, type(e).__name__, e)
+        # Copy source audio into the durable note-keyed store (best-effort — a
+        # cleaned/absent source just means the note has no audio; never raises).
+        self._persist_audio(job)
+
+    def _persist_audio(self, job: NoteJob) -> None:
+        if not (self._audio_store and self._audio_resolver and job.audio_source_id):
+            return
+        try:
+            source = self._audio_resolver(job.audio_source_id)
+            if source:
+                dest = self._audio_store.save_from(job.id, source)
+                if dest:
+                    log.info("note %s AUDIO stored from %s", job.id, job.audio_source_id)
+        except Exception as e:  # noqa: BLE001 - audio linking must not kill the note
+            log.warning("note %s audio store FAILED: %s: %s", job.id, type(e).__name__, e)
 
     def _emit_terminal(self, job: NoteJob, event: NoteEvent) -> None:
         """Enqueue the authoritative terminal (done/error) event, after

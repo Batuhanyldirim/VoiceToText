@@ -185,6 +185,10 @@ export interface CreateNoteBody {
   source_name?: string;
   /** How long the source transcription took (carried so the note shows it). */
   transcribe_seconds?: number | null;
+  /** Structured source turns to persist for the "Kaynak deşifre" panel (ADR-0019). */
+  transcript_json?: Turn[];
+  /** The originating job/stream id whose source audio to link (ADR-0019). */
+  audio_source_id?: string;
 }
 
 /** A reusable transcript from out/*.json (GET /transcripts). */
@@ -275,6 +279,9 @@ export interface Note {
   finalized_at?: string | null;
   patient_id?: string | null;
   patient_name?: string | null;
+  // Audio-linked source transcript (ADR-0019).
+  turns?: Turn[];
+  has_audio?: boolean;
 }
 
 /**

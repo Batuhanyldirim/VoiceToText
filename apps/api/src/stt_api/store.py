@@ -48,6 +48,9 @@ class SavedNote:
     finalized_at: Optional[str] = None
     # Patient this note is filed under (ADR-0016). NULL = unassigned.
     patient_id: Optional[str] = None
+    # Source transcript turns as a JSON string [{speaker,text,start,end}] (ADR-0019).
+    # NULL for notes made before this feature / from plain-text-only transcripts.
+    transcript_json: Optional[str] = None
 
     @property
     def effective_note(self) -> str:
@@ -57,6 +60,18 @@ class SavedNote:
     @property
     def edited(self) -> bool:
         return self.edited_note is not None
+
+    @property
+    def turns(self) -> list:
+        """The source transcript turns (parsed from transcript_json), or []."""
+        if not self.transcript_json:
+            return []
+        import json
+        try:
+            data = json.loads(self.transcript_json)
+            return data if isinstance(data, list) else []
+        except (ValueError, TypeError):
+            return []
 
     def summary(self) -> dict:
         """List-view shape (no heavy transcript/note bodies)."""
@@ -166,6 +181,9 @@ class NoteStore:
             )
             if "patient_id" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN patient_id TEXT")
+            # Audio-linked source transcript (ADR-0019): the turns as JSON.
+            if "transcript_json" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN transcript_json TEXT")
 
     def save(self, note: SavedNote) -> None:
         with self._connect() as conn:
@@ -174,13 +192,14 @@ class NoteStore:
                 INSERT OR REPLACE INTO notes
                     (id, created_at, title, source_name, provider, model, template,
                      transcript, note, transcribe_seconds, note_seconds,
-                     edited_note, status, finalized_at, patient_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     edited_note, status, finalized_at, patient_id, transcript_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
                  note.transcribe_seconds, note.note_seconds,
-                 note.edited_note, note.status, note.finalized_at, note.patient_id),
+                 note.edited_note, note.status, note.finalized_at, note.patient_id,
+                 note.transcript_json),
             )
 
     def list(self, patient_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
@@ -372,3 +391,78 @@ class NoteStore:
 
 class NoteLockedError(RuntimeError):
     """Raised when an edit/revert is attempted on a finalized note (ADR-0015)."""
+
+
+# Default: apps/api/note_audio/ (sibling of notes.db + jobs/), git-ignored.
+NOTE_AUDIO_DIR = Path(
+    os.environ.get(
+        "STT_NOTE_AUDIO_DIR", Path(__file__).resolve().parents[2] / "note_audio"
+    )
+)
+
+
+class NoteAudioStore:
+    """Durable, note-keyed store for a note's source audio (ADR-0019).
+
+    The source recording lives in ephemeral job scratch (apps/api/jobs/…); we copy
+    it here at note-persist time keyed by note id so the link survives cleanup. The
+    dir is project-local + git-ignored (PHI never committed; `rm -rf` cleans up —
+    ADR-0003/0010). Filenames are ALWAYS `<note_id>.<ext>` with the note id
+    validated as hex — no caller-controlled path component, so no traversal."""
+
+    def __init__(self, audio_dir: Path = NOTE_AUDIO_DIR):
+        self.audio_dir = Path(audio_dir)
+        self.audio_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _safe_id(note_id: str) -> str:
+        """Note ids are uuid4().hex[:12] (hex). Accept only alphanumerics so a bad
+        id (path separators, dots, traversal) can never escape the store dir. Kept
+        a touch broader than strict hex so it's robust to any future id scheme."""
+        nid = (note_id or "").strip().lower()
+        if not nid or not nid.isalnum() or not nid.isascii():
+            raise ValueError(f"invalid note id: {note_id!r}")
+        return nid
+
+    def save_from(self, note_id: str, source: Path) -> Optional[Path]:
+        """Copy `source` audio into the store as <note_id><suffix>. Best-effort:
+        returns the stored path, or None if the source is missing/unreadable
+        (a cleaned scratch dir just means the note has no audio — never raises for
+        that). Removes any prior audio for this note first (one file per note)."""
+        nid = self._safe_id(note_id)
+        source = Path(source)
+        if not source.is_file():
+            return None
+        suffix = source.suffix.lower() or ".bin"
+        self.delete(note_id)  # keep exactly one audio file per note
+        dest = self.audio_dir / f"{nid}{suffix}"
+        try:
+            import shutil
+            shutil.copyfile(source, dest)
+            return dest
+        except OSError:
+            return None
+
+    def path(self, note_id: str) -> Optional[Path]:
+        """The stored audio file for a note (any extension), or None."""
+        try:
+            nid = self._safe_id(note_id)
+        except ValueError:
+            return None
+        matches = sorted(self.audio_dir.glob(f"{nid}.*"))
+        return matches[0] if matches else None
+
+    def delete(self, note_id: str) -> bool:
+        """Remove a note's stored audio (all extensions). Returns True if any."""
+        try:
+            nid = self._safe_id(note_id)
+        except ValueError:
+            return False
+        removed = False
+        for p in self.audio_dir.glob(f"{nid}.*"):
+            try:
+                p.unlink()
+                removed = True
+            except OSError:
+                pass
+        return removed

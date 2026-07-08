@@ -338,6 +338,9 @@ Each deliberate choice has an ADR — read it before changing that area:
 - **Live (streaming) transcription** — chunk ASR during recording (silence-aligned cuts, <30 s, timestamps offset), one global diarization pass at finish; a *separate* PCM-stream ingest path, local-only, enhancement skipped as a tradeoff. → [`adr/0014`](adr/0014-live-streaming-transcription.md) · satisfies REQ-125–131
 - **Editable & finalizable notes** — edits are an overlay (`edited_note`) that never overwrites the AI original (`note`); a `draft`→`final` lifecycle (`finalized_at` + edit-lock) with reopen + revert-to-AI. First slice of the patient/encounter product tier. → [`adr/0015`](adr/0015-editable-finalizable-notes.md) · satisfies REQ-132–136
 - **Patient organization** — a lightweight `patients` table + `notes.patient_id` link; file a note under a patient (name-reuse, optional MRN), browse/filter by patient. Additive to the flat note list, not a nav rebuild; (re)filing allowed even when a note is final. → [`adr/0016`](adr/0016-patient-organization.md) · satisfies REQ-137–140
+- **pytest suite (store + API)** — a fast, hermetic (temp-DB, no ML) test suite for the deterministic layer; reverses the "no unit suite" stance for non-ML code. `make test`. → [`adr/0017`](adr/0017-pytest-store-and-api-suite.md)
+- **Note search** — case-insensitive SQLite LIKE across title/patient/effective-body, composes with the patient filter; not FTS. → [`adr/0018`](adr/0018-note-search.md) · satisfies REQ-141
+- **Audio-linked source transcript** — persist the note's structured turns (`transcript_json`) + copy the source audio into a git-ignored note-keyed store (`note_audio/<id>`); the note page shows a "Kaynak deşifre" panel with click-to-seek playback. Graceful without audio; deletion removes it. → [`adr/0019`](adr/0019-audio-linked-source-transcript.md) · satisfies REQ-143–146
 
 ## Error-handling & fallback strategy
 

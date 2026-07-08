@@ -36,7 +36,8 @@ import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
 import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
 import PatientSelector from "./PatientSelector";
 import { markdownToPlainText, printNoteAsPdf } from "../utils/noteExport";
-import type { Note, NoteSSEPayload, NoteStage } from "../types";
+import type { Note, NoteSSEPayload, NoteStage, Turn } from "../types";
+import SourceTranscript from "./SourceTranscript";
 import {
   ApiError,
   editNote,
@@ -126,6 +127,9 @@ export default function NoteViewer({
   // Patient this note is filed under (ADR-0016).
   const [patientId, setPatientId] = useState<string | null>(null);
   const [patientName, setPatientName] = useState<string | null>(null);
+  // Source transcript turns + whether the recording is available (ADR-0019).
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [hasAudio, setHasAudio] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -169,6 +173,8 @@ export default function NoteViewer({
       setIsEdited(Boolean(job.edited));
       setPatientId(job.patient_id ?? null);
       setPatientName(job.patient_name ?? null);
+      if (Array.isArray(job.turns)) setTurns(job.turns);
+      setHasAudio(Boolean(job.has_audio));
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -804,6 +810,12 @@ export default function NoteViewer({
                 <Markdown stripFirstHeading>{review}</Markdown>
               </CardContent>
             </Card>
+          )}
+
+          {/* Source transcript with click-to-seek audio (ADR-0019). Shown when
+              the note carries turns; the player appears only if audio exists. */}
+          {!editing && turns.length > 0 && (
+            <SourceTranscript noteId={noteId} turns={turns} hasAudio={hasAudio} />
           )}
         </>
       )}

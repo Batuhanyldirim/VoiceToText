@@ -48,6 +48,10 @@ apps/api/notes.db
 *.db-journal
 *.db-wal
 
+# ─── Note source audio (PHI — NEVER commit; ADR-0019/0003) ─────────────────
+apps/api/note_audio/
+note_audio/
+
 # ─── Machine-local, non-committed integrations ────────────────────────────
 # Optional local note-provider plugin + its enablement. Kept out of git so the
 # committed repo offers only the local (Ollama) provider and carries no

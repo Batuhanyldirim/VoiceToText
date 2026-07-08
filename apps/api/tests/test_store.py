@@ -167,6 +167,72 @@ def test_search_blank_returns_all(store):
     assert len(store.list(q="   ")) == 2
 
 
+# --- audio-linked source transcript (ADR-0019) ------------------------------
+
+def test_transcript_json_persists_and_parses(store):
+    import json
+    turns = [
+        {"speaker": "Speaker 1", "text": "merhaba", "start": 0.0, "end": 1.2},
+        {"speaker": "Speaker 2", "text": "iyi günler", "start": 1.2, "end": 2.5},
+    ]
+    make_saved_note(store, "n1", transcript_json=json.dumps(turns))
+    n = store.get("n1")
+    assert n.turns == turns
+    assert len(n.turns) == 2 and n.turns[0]["speaker"] == "Speaker 1"
+
+
+def test_turns_empty_when_no_json_or_bad_json(store):
+    make_saved_note(store, "n1")  # no transcript_json
+    assert store.get("n1").turns == []
+    make_saved_note(store, "n2", transcript_json="{not valid json")
+    assert store.get("n2").turns == []
+
+
+def test_note_audio_store_save_path_delete(tmp_path):
+    from stt_api.store import NoteAudioStore
+    astore = NoteAudioStore(tmp_path / "note_audio")
+    src = tmp_path / "input.webm"
+    src.write_bytes(b"OggS-fake-audio")
+    dest = astore.save_from("abc123", src)
+    assert dest is not None and dest.suffix == ".webm"
+    assert astore.path("abc123") == dest
+    assert astore.delete("abc123") is True
+    assert astore.path("abc123") is None
+
+
+def test_note_audio_store_missing_source_is_none(tmp_path):
+    from stt_api.store import NoteAudioStore
+    astore = NoteAudioStore(tmp_path / "note_audio")
+    assert astore.save_from("abc123", tmp_path / "nope.wav") is None
+
+
+def test_note_audio_store_rejects_bad_id(tmp_path):
+    from stt_api.store import NoteAudioStore
+    astore = NoteAudioStore(tmp_path / "note_audio")
+    src = tmp_path / "a.wav"
+    src.write_bytes(b"x")
+    # Reject anything with path separators, dots, traversal, or spaces — the
+    # things that could escape the store dir. (Plain alphanumerics are fine.)
+    for bad in ["../evil", "a/b", "abc.def", "", "  ", "a b", "a\\b"]:
+        with pytest.raises(ValueError):
+            astore.save_from(bad, src)
+    # path()/delete() of a bad id are safe no-ops (not exceptions)
+    assert astore.path("../evil") is None
+    assert astore.delete("../evil") is False
+
+
+def test_note_audio_store_one_file_per_note(tmp_path):
+    """Saving a second time replaces the prior audio (one file per note)."""
+    from stt_api.store import NoteAudioStore
+    astore = NoteAudioStore(tmp_path / "note_audio")
+    (tmp_path / "a.wav").write_bytes(b"one")
+    (tmp_path / "b.webm").write_bytes(b"two")
+    astore.save_from("abc123", tmp_path / "a.wav")
+    astore.save_from("abc123", tmp_path / "b.webm")
+    matches = list((tmp_path / "note_audio").glob("abc123.*"))
+    assert len(matches) == 1 and matches[0].suffix == ".webm"
+
+
 # --- migration safety (ADR-0010/0015/0016) ---------------------------------
 
 def test_migration_adds_columns_without_data_loss(tmp_path):
