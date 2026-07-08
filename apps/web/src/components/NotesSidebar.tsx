@@ -6,7 +6,10 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  FormControl,
   IconButton,
+  MenuItem,
+  Select,
   Stack,
   Tooltip,
   Typography,
@@ -19,12 +22,14 @@ import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import type { ActiveJob, ActiveNote, SavedNoteSummary } from "../types";
+import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
+import type { ActiveJob, ActiveNote, Patient, SavedNoteSummary } from "../types";
 import {
   deleteNote,
   listActiveJobs,
   listActiveNotes,
   listNotes,
+  listPatients,
   retryJob,
   retryNote,
 } from "../config/api";
@@ -86,46 +91,54 @@ export default function NotesSidebar({
   const [saved, setSaved] = useState<SavedNoteSummary[]>([]);
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
   const [activeNotes, setActiveNotes] = useState<ActiveNote[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  // "" = all patients; otherwise a patient id to filter the saved-note list by.
+  const [patientFilter, setPatientFilter] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const [s, j, n] = await Promise.all([
-        listNotes(signal),
-        listActiveJobs(signal),
-        listActiveNotes(signal),
-      ]);
-      if (signal?.aborted) return;
-      setSaved(s);
-      setActiveJobs(j);
-      setActiveNotes(n);
-      setLoadError(null);
-    } catch (e) {
-      if (!signal?.aborted) {
-        setLoadError(e instanceof Error ? e.message : "Liste yüklenemedi.");
+  const refresh = useCallback(
+    async (signal?: AbortSignal, filter?: string) => {
+      try {
+        const [s, j, n, ps] = await Promise.all([
+          listNotes(signal, filter || undefined),
+          listActiveJobs(signal),
+          listActiveNotes(signal),
+          listPatients(signal),
+        ]);
+        if (signal?.aborted) return;
+        setSaved(s);
+        setActiveJobs(j);
+        setActiveNotes(n);
+        setPatients(ps);
+        setLoadError(null);
+      } catch (e) {
+        if (!signal?.aborted) {
+          setLoadError(e instanceof Error ? e.message : "Liste yüklenemedi.");
+        }
+      } finally {
+        if (!signal?.aborted) setLoading(false);
       }
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
-  // Initial load + reload on refreshToken change.
+  // Initial load + reload on refreshToken or patient-filter change.
   useEffect(() => {
     const abort = new AbortController();
-    void refresh(abort.signal);
+    void refresh(abort.signal, patientFilter);
     return () => abort.abort();
-  }, [refresh, refreshToken]);
+  }, [refresh, refreshToken, patientFilter]);
 
   // Poll while there is active work so rows progress and drop off when done.
   const hasActive = activeJobs.length > 0 || activeNotes.length > 0;
   useEffect(() => {
     if (!hasActive) return;
-    const id = setInterval(() => void refresh(), POLL_MS);
+    const id = setInterval(() => void refresh(undefined, patientFilter), POLL_MS);
     return () => clearInterval(id);
-  }, [hasActive, refresh]);
+  }, [hasActive, refresh, patientFilter]);
 
   const handleDelete = useCallback(
     async (e: React.MouseEvent, id: string) => {
@@ -204,6 +217,30 @@ export default function NotesSidebar({
           Yeni not
         </Button>
       </Box>
+
+      {/* Patient filter (ADR-0016) — only shown once patients exist. */}
+      {patients.length > 0 && (
+        <Box sx={{ px: 2, pb: 1.5 }}>
+          <FormControl fullWidth size="small">
+            <Select
+              value={patientFilter}
+              onChange={(e) => setPatientFilter(e.target.value)}
+              displayEmpty
+              startAdornment={
+                <PersonRoundedIcon fontSize="small" sx={{ color: "text.disabled", mr: 1 }} />
+              }
+            >
+              <MenuItem value="">Tüm hastalar</MenuItem>
+              {patients.map((p) => (
+                <MenuItem key={p.id} value={p.id}>
+                  {p.name}
+                  {typeof p.note_count === "number" ? ` (${p.note_count})` : ""}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+      )}
 
       {/* List */}
       <Box sx={{ flexGrow: 1, overflowY: "auto", px: 1, pb: 2 }}>
@@ -316,6 +353,7 @@ export default function NotesSidebar({
                         </Typography>
                       </Stack>
                       <Typography variant="caption" color="text.secondary" noWrap>
+                        {n.patient_name ? `${n.patient_name} · ` : ""}
                         {formatDate(n.created_at)}
                         {n.status === "final"
                           ? " · Tamamlandı"

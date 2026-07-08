@@ -28,6 +28,7 @@ import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
 import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
+import PatientSelector from "./PatientSelector";
 import type { Note, NoteSSEPayload, NoteStage } from "../types";
 import {
   ApiError,
@@ -115,6 +116,9 @@ export default function NoteViewer({
   const [lifecycle, setLifecycle] = useState<"draft" | "final">("draft");
   const [finalizedAt, setFinalizedAt] = useState<string | null>(null);
   const [isEdited, setIsEdited] = useState(false);
+  // Patient this note is filed under (ADR-0016).
+  const [patientId, setPatientId] = useState<string | null>(null);
+  const [patientName, setPatientName] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -155,6 +159,8 @@ export default function NoteViewer({
       if (job.note_status) setLifecycle(job.note_status);
       setFinalizedAt(job.finalized_at ?? null);
       setIsEdited(Boolean(job.edited));
+      setPatientId(job.patient_id ?? null);
+      setPatientName(job.patient_name ?? null);
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -588,6 +594,29 @@ export default function NoteViewer({
           )}
         </Stack>
       </Box>
+
+      {/* Patient filing (ADR-0016) — assign the note to a patient. Available once
+          the note is persisted; allowed even when final (filing is metadata). The
+          selector renders its own chip / "Hasta ata" button. */}
+      {isDone && (
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
+            Hasta:
+          </Typography>
+          <PatientSelector
+            noteId={noteId}
+            patientId={patientId}
+            patientName={patientName}
+            onAssigned={(pid, pname) => {
+              setPatientId(pid);
+              setPatientName(pname);
+              setToast(pid ? `"${pname}" hastasına atandı` : "Hasta ataması kaldırıldı");
+              onSavedRef.current?.(); // refresh the sidebar (name + filter)
+            }}
+            onError={(m) => setToast(m)}
+          />
+        </Stack>
+      )}
 
       {isFinal ? (
         <Alert severity="success" icon={<CheckCircleRoundedIcon />}>
