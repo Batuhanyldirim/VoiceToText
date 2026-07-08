@@ -10,6 +10,8 @@ import {
   Divider,
   Snackbar,
   Stack,
+  TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
@@ -20,8 +22,22 @@ import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import TimerOutlinedIcon from "@mui/icons-material/TimerOutlined";
 import MemoryRoundedIcon from "@mui/icons-material/MemoryRounded";
+import EditRoundedIcon from "@mui/icons-material/EditRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
+import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
 import type { Note, NoteSSEPayload, NoteStage } from "../types";
-import { ApiError, getNote, noteEventsUrl } from "../config/api";
+import {
+  ApiError,
+  editNote,
+  finalizeNote,
+  getNote,
+  noteEventsUrl,
+  reopenNote,
+  revertNote,
+} from "../config/api";
 import { useElapsed } from "../hooks/useElapsed";
 import { formatSeconds } from "../utils/format";
 import Markdown from "./Markdown";
@@ -95,6 +111,15 @@ export default function NoteViewer({
   // Real server start (epoch ms) so the live timer survives a refresh.
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
 
+  // Edit/finalize lifecycle (ADR-0015). Populated once the note is persisted.
+  const [lifecycle, setLifecycle] = useState<"draft" | "final">("draft");
+  const [finalizedAt, setFinalizedAt] = useState<string | null>(null);
+  const [isEdited, setIsEdited] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
   const finishedRef = useRef(false);
   // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
   const onSavedRef = useRef(onSaved);
@@ -126,6 +151,10 @@ export default function NoteViewer({
       if (typeof job.transcribe_seconds === "number")
         setTranscribeSeconds(job.transcribe_seconds);
       if (job.model) setModel(job.model);
+      // Edit/finalize lifecycle (present once persisted).
+      if (job.note_status) setLifecycle(job.note_status);
+      setFinalizedAt(job.finalized_at ?? null);
+      setIsEdited(Boolean(job.edited));
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -300,6 +329,89 @@ export default function NoteViewer({
     URL.revokeObjectURL(url);
   };
 
+  // --- edit / finalize lifecycle (ADR-0015) --------------------------------
+  // Apply the note returned by a lifecycle endpoint to local state.
+  const applyNote = (n: Note) => {
+    if (typeof n.note === "string") setNote(n.note);
+    if (n.note_status) setLifecycle(n.note_status);
+    setFinalizedAt(n.finalized_at ?? null);
+    setIsEdited(Boolean(n.edited));
+  };
+
+  const isFinal = lifecycle === "final";
+  const canEdit = isDone && !isFinal;
+  const finalizedLabel = finalizedAt
+    ? new Date(finalizedAt).toLocaleString("tr-TR", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+
+  const startEdit = () => {
+    setDraftText(note);
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    setBusy(true);
+    try {
+      applyNote(await editNote(noteId, draftText));
+      setEditing(false);
+      setToast("Not kaydedildi");
+    } catch (e) {
+      setToast(
+        e instanceof ApiError && e.status === 409
+          ? "Not kilitli — düzenlemek için önce yeniden açın."
+          : "Not kaydedilemedi.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doFinalize = async () => {
+    setBusy(true);
+    try {
+      applyNote(await finalizeNote(noteId));
+      setEditing(false);
+      setToast("Not tamamlandı olarak işaretlendi");
+      onSavedRef.current?.(); // refresh the sidebar status
+    } catch {
+      setToast("Tamamlanamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doReopen = async () => {
+    setBusy(true);
+    try {
+      applyNote(await reopenNote(noteId));
+      setToast("Not yeniden açıldı — artık düzenlenebilir");
+      onSavedRef.current?.();
+    } catch {
+      setToast("Yeniden açılamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRevert = async () => {
+    if (!window.confirm("Düzenlemelerinizi atıp AI taslağına dönmek istiyor musunuz?")) return;
+    setBusy(true);
+    try {
+      applyNote(await revertNote(noteId));
+      setEditing(false);
+      setToast("AI taslağına dönüldü");
+    } catch {
+      setToast("Geri alınamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Stack spacing={2.5}>
       <Box>
@@ -346,7 +458,24 @@ export default function NoteViewer({
                   sx={{ fontVariantNumeric: "tabular-nums" }}
                 />
               )}
-              {isDone && <Chip label="Tamamlandı" size="small" color="success" />}
+              {isDone && (
+                <Chip
+                  icon={isFinal ? <CheckCircleRoundedIcon /> : undefined}
+                  label={isFinal ? "Tamamlandı" : "Taslak"}
+                  size="small"
+                  color={isFinal ? "success" : "default"}
+                  variant={isFinal ? "filled" : "outlined"}
+                />
+              )}
+              {isDone && isEdited && (
+                <Chip
+                  icon={<EditRoundedIcon />}
+                  label="Düzenlendi"
+                  size="small"
+                  variant="outlined"
+                  color="info"
+                />
+              )}
               {isDone && transcribeSeconds != null && (
                 <Chip
                   icon={<GraphicEqRoundedIcon />}
@@ -367,36 +496,111 @@ export default function NoteViewer({
           </Box>
           {isDone && (
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-              <Button
-                variant="outlined"
-                startIcon={<ContentCopyRoundedIcon />}
-                onClick={handleCopy}
-              >
-                Kopyala
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<DownloadRoundedIcon />}
-                onClick={handleDownload}
-              >
-                İndir .md
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<ReplayRoundedIcon />}
-                onClick={onReset}
-              >
-                Baştan başla
-              </Button>
+              {editing ? (
+                <>
+                  <Button
+                    variant="contained"
+                    startIcon={busy ? <CircularProgress size={16} /> : <SaveRoundedIcon />}
+                    onClick={() => void saveEdit()}
+                    disabled={busy}
+                  >
+                    Kaydet
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<CloseRoundedIcon />}
+                    onClick={() => setEditing(false)}
+                    disabled={busy}
+                  >
+                    İptal
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {canEdit && (
+                    <Button
+                      variant="outlined"
+                      startIcon={<EditRoundedIcon />}
+                      onClick={startEdit}
+                    >
+                      Düzenle
+                    </Button>
+                  )}
+                  {canEdit && (
+                    <Button
+                      variant="contained"
+                      color="success"
+                      startIcon={<CheckCircleRoundedIcon />}
+                      onClick={() => void doFinalize()}
+                      disabled={busy}
+                    >
+                      Tamamla
+                    </Button>
+                  )}
+                  {isFinal && (
+                    <Button
+                      variant="outlined"
+                      startIcon={<LockOpenRoundedIcon />}
+                      onClick={() => void doReopen()}
+                      disabled={busy}
+                    >
+                      Yeniden aç
+                    </Button>
+                  )}
+                  {canEdit && isEdited && (
+                    <Tooltip title="Düzenlemeleri at, AI taslağına dön">
+                      <Button
+                        variant="text"
+                        color="inherit"
+                        startIcon={<RestoreRoundedIcon />}
+                        onClick={() => void doRevert()}
+                        disabled={busy}
+                        sx={{ color: "text.secondary" }}
+                      >
+                        AI taslağı
+                      </Button>
+                    </Tooltip>
+                  )}
+                  <Button
+                    variant="outlined"
+                    startIcon={<ContentCopyRoundedIcon />}
+                    onClick={handleCopy}
+                  >
+                    Kopyala
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<DownloadRoundedIcon />}
+                    onClick={handleDownload}
+                  >
+                    İndir .md
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<ReplayRoundedIcon />}
+                    onClick={onReset}
+                  >
+                    Baştan başla
+                  </Button>
+                </>
+              )}
             </Stack>
           )}
         </Stack>
       </Box>
 
-      <Alert severity="warning" icon={<WarningAmberRoundedIcon />}>
-        Taslak — hekim incelemesi için, nihai kayıt değildir. Kullanmadan önce
-        her ayrıntıyı kaynakla doğrulayın.
-      </Alert>
+      {isFinal ? (
+        <Alert severity="success" icon={<CheckCircleRoundedIcon />}>
+          Tamamlandı — bu not hekim tarafından onaylanmış nihai kayıttır
+          {finalizedLabel ? ` (${finalizedLabel})` : ""}. Düzenlemek için
+          "Yeniden aç".
+        </Alert>
+      ) : (
+        <Alert severity="warning" icon={<WarningAmberRoundedIcon />}>
+          Taslak — hekim incelemesi için, nihai kayıt değildir. Kullanmadan önce
+          her ayrıntıyı kaynakla doğrulayın; gerekirse "Düzenle" ile düzeltin.
+        </Alert>
+      )}
 
       {isError ? (
         <Card>
@@ -443,6 +647,28 @@ export default function NoteViewer({
                     {message}
                   </Typography>
                 )
+              ) : editing ? (
+                // Edit mode: the whole note (body + review) as editable markdown.
+                <TextField
+                  value={draftText}
+                  onChange={(e) => setDraftText(e.target.value)}
+                  multiline
+                  fullWidth
+                  minRows={16}
+                  disabled={busy}
+                  variant="outlined"
+                  helperText="Markdown desteklenir (# başlık, **kalın**, - madde). Kaydedince biçimlendirilmiş olarak görüntülenir."
+                  slotProps={{
+                    htmlInput: {
+                      style: {
+                        fontFamily:
+                          'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                        fontSize: "0.875rem",
+                        lineHeight: 1.6,
+                      },
+                    },
+                  }}
+                />
               ) : body ? (
                 // Done: render the note as formatted markdown for readability.
                 <Markdown>{body}</Markdown>
@@ -454,7 +680,9 @@ export default function NoteViewer({
             </CardContent>
           </Card>
 
-          {review && (
+          {/* The review section is part of the full note text while editing, so
+              only show the separate highlight card when NOT editing. */}
+          {review && !editing && (
             <Card
               sx={{
                 borderColor: "warning.main",
@@ -486,6 +714,13 @@ export default function NoteViewer({
         autoHideDuration={2000}
         onClose={() => setCopied(false)}
         message="Klinik not panoya kopyalandı"
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
+      <Snackbar
+        open={toast !== null}
+        autoHideDuration={2500}
+        onClose={() => setToast(null)}
+        message={toast ?? ""}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
     </Stack>

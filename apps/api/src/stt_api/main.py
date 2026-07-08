@@ -31,7 +31,7 @@ from stt_core.progress import ProgressEvent
 
 from .jobs import JobManager
 from .notes import NoteJobManager
-from .store import NoteStore
+from .store import NoteLockedError, NoteStore
 from .stream import StreamManager
 
 # --- Logging: surface our job/note lifecycle INFO lines, and quiet the known,
@@ -548,8 +548,47 @@ async def retry_note(note_id: str) -> dict:
     return {"note_id": job.id, "status": job.status}
 
 
+def _saved_note_response(saved) -> dict:
+    """GET /notes/{id} shape for a persisted note. `note` is the EFFECTIVE body
+    (clinician edit if any, else AI original); `ai_note`/`edited_note` expose the
+    overlay so the UI can show/revert it; status/finalized_at drive the lifecycle
+    UI (ADR-0015)."""
+    return {
+        "note_id": saved.id,
+        "status": "done",  # generation status (the note exists); see note_status
+        "provider": saved.provider,
+        "model": saved.model,
+        "template": saved.template,
+        "note": saved.effective_note,
+        "ai_note": saved.note,
+        "edited_note": saved.edited_note,
+        "edited": saved.edited,
+        "note_status": saved.status,       # draft | final (edit lifecycle)
+        "finalized_at": saved.finalized_at,
+        "result": {
+            "note": saved.effective_note,
+            "provider": saved.provider,
+            "model": saved.model,
+            "template": saved.template,
+        },
+        "error": None,
+        "created_at": saved.created_at,
+        "title": saved.title,
+        "source_name": saved.source_name,
+        "transcript": saved.transcript,
+        "transcribe_seconds": saved.transcribe_seconds,
+        "note_seconds": saved.note_seconds,
+    }
+
+
 @app.get("/notes/{note_id}")
 def get_note(note_id: str) -> dict:
+    # The durable store is authoritative for a COMPLETED note's body + lifecycle
+    # (edits/finalize live there — ADR-0015). Only fall back to the in-memory job
+    # while it's still generating (not yet persisted).
+    saved = note_store.get(note_id)
+    if saved:
+        return _saved_note_response(saved)
     job = note_manager.get(note_id)
     if job:
         return {
@@ -566,32 +605,7 @@ def get_note(note_id: str) -> dict:
             "started_at": job.started_at,
             "created_at": job.created_at,
         }
-    # Not live in memory — fall back to durable history so browsing a past note
-    # returns its full body in the same response shape (status="done").
-    saved = note_store.get(note_id)
-    if not saved:
-        raise HTTPException(404, "note not found")
-    return {
-        "note_id": saved.id,
-        "status": "done",
-        "provider": saved.provider,
-        "model": saved.model,
-        "template": saved.template,
-        "note": saved.note,
-        "result": {
-            "note": saved.note,
-            "provider": saved.provider,
-            "model": saved.model,
-            "template": saved.template,
-        },
-        "error": None,
-        "created_at": saved.created_at,
-        "title": saved.title,
-        "source_name": saved.source_name,
-        "transcript": saved.transcript,
-        "transcribe_seconds": saved.transcribe_seconds,
-        "note_seconds": saved.note_seconds,
-    }
+    raise HTTPException(404, "note not found")
 
 
 @app.delete("/notes/{note_id}")
@@ -603,6 +617,65 @@ def delete_note(note_id: str) -> dict:
     if not in_memory and not in_store:
         raise HTTPException(404, "note not found")
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Edit / finalize lifecycle for a saved note (ADR-0015). Edits are an overlay on
+# the durable store — the AI original is never overwritten; a note can be
+# finalized (locked), reopened, and reverted to the AI draft.
+# ---------------------------------------------------------------------------
+
+
+class NoteEditBody(BaseModel):
+    note: str
+
+
+@app.patch("/notes/{note_id}")
+def edit_note(note_id: str, body: NoteEditBody) -> dict:
+    """Save a clinician-edited body as an overlay. 404 if unknown, 409 if final."""
+    if body.note is None:
+        raise HTTPException(400, "note body is required")
+    try:
+        saved = note_store.update_body(note_id, body.note)
+    except NoteLockedError as e:
+        raise HTTPException(409, str(e))
+    if not saved:
+        raise HTTPException(404, "note not found")
+    return _saved_note_response(saved)
+
+
+@app.post("/notes/{note_id}/finalize")
+def finalize_note(note_id: str) -> dict:
+    """Mark a note final (locks edits) + stamp finalized_at."""
+    from datetime import datetime, timezone
+    saved = note_store.set_status(
+        note_id, "final", datetime.now(timezone.utc).isoformat()
+    )
+    if not saved:
+        raise HTTPException(404, "note not found")
+    return _saved_note_response(saved)
+
+
+@app.post("/notes/{note_id}/reopen")
+def reopen_note(note_id: str) -> dict:
+    """Return a finalized note to draft so it can be edited again."""
+    saved = note_store.set_status(note_id, "draft", None)
+    if not saved:
+        raise HTTPException(404, "note not found")
+    return _saved_note_response(saved)
+
+
+@app.post("/notes/{note_id}/revert")
+def revert_note(note_id: str) -> dict:
+    """Clear the edit overlay so the effective body is the AI original again.
+    404 if unknown, 409 if final (reopen first)."""
+    try:
+        saved = note_store.revert(note_id)
+    except NoteLockedError as e:
+        raise HTTPException(409, str(e))
+    if not saved:
+        raise HTTPException(404, "note not found")
+    return _saved_note_response(saved)
 
 
 @app.get("/notes/{note_id}/events")

@@ -366,6 +366,38 @@ ADR. *(→ ADR-0014, ADR-0008, ADR-0012, ADR-0003)*
   incremental speed; the batch upload/record paths keep enhancement), while still
   diarizing at finish. *(→ ADR-0014, ADR-0004)*
 
+## Editable & finalizable notes (Tier 1)
+
+A generated note is an AI **draft**; the doctor must be able to correct it and
+mark it a **final** record. The AI's original output is preserved as an audit
+trail — edits are an overlay, so the doctor can always see (and revert to) what
+the model produced. A finalized note is locked until explicitly reopened. This is
+the first of the "patient/encounter" product tier. *(→ ADR-0015, ADR-0010)*
+
+- **REQ-132** (Event) — WHEN the user edits a saved note's body and saves, THE
+  SYSTEM SHALL persist the edited text as an **overlay** (`edited_note`) WITHOUT
+  overwriting the AI's original (`note`), and SHALL thereafter serve the edited
+  text as the note's **effective body** while keeping the original recoverable.
+  *(→ ADR-0015, ADR-0010)*
+- **REQ-133** (State) — WHILE a note's `status` is `draft`, THE SYSTEM SHALL allow
+  editing and re-generation; WHEN the user **finalizes** it (`POST /notes/{id}/finalize`),
+  THE SYSTEM SHALL set `status = final`, stamp `finalized_at`, and thereafter
+  **reject edits** to it with a 4xx until it is reopened. *(→ ADR-0015)*
+- **REQ-134** (Event) — WHEN the user **reopens** a finalized note
+  (`POST /notes/{id}/reopen`), THE SYSTEM SHALL return it to `draft` (clearing
+  `finalized_at`) so it can be edited again. *(→ ADR-0015)*
+- **REQ-135** (Event) — WHEN the user **reverts** a note to the AI draft, THE
+  SYSTEM SHALL clear the `edited_note` overlay so the effective body is the
+  original AI `note` again (no data loss — the original was never overwritten).
+  *(→ ADR-0015)*
+- **REQ-136** (Ubiquitous) — THE SYSTEM SHALL surface each saved note's `status`
+  (`draft`/`final`), `finalized_at`, and whether it has been edited on the note
+  APIs (`GET /notes`, `GET /notes/{id}`), and the web UI SHALL show a
+  **Taslak/Tamamlandı** state, an **edit** affordance with save/cancel, a
+  **Tamamla/İmzala** ↔ **Yeniden aç** control, and a **revert-to-AI-draft** action.
+  The DB migration SHALL add these columns to a pre-existing notes table without
+  data loss. *(→ ADR-0015, ADR-0010)*
+
 ---
 
 ## Verification gate

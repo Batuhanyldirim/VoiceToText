@@ -269,6 +269,53 @@ export async function deleteNote(
 }
 
 // ---------------------------------------------------------------------------
+// Edit / finalize lifecycle for a saved note (ADR-0015)
+// ---------------------------------------------------------------------------
+
+/** Save a clinician-edited note body (overlay; AI original preserved). Throws
+ *  ApiError(409) if the note is finalized. Returns the updated note. */
+export async function editNote(
+  id: string,
+  note: string,
+  signal?: AbortSignal,
+): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+/** Mark a note final (locks edits). */
+export async function finalizeNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/finalize`, {
+    method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+/** Reopen a finalized note back to draft so it can be edited. */
+export async function reopenNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/reopen`, {
+    method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+/** Discard the clinician edit overlay so the effective body is the AI draft. */
+export async function revertNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/revert`, {
+    method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+// ---------------------------------------------------------------------------
 // Active (in-progress / failed) work — shown at the top of the sidebar
 // ---------------------------------------------------------------------------
 

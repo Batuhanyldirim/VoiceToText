@@ -336,6 +336,7 @@ Each deliberate choice has an ADR — read it before changing that area:
 - **Note-output reshape** — the chosen template *is* the note (+ one appended review section), anti-preamble, pedigree only when family history is rich; applies to every provider. → [`adr/0009`](adr/0009-clinical-note-pluggable-provider.md) · satisfies REQ-114–115
 - **In-app voice recording** — a browser `MediaRecorder` clip is wrapped as a File and pushed through the *existing* upload path (no second pipeline); client picks a server-accepted container. → [`adr/0013`](adr/0013-in-app-voice-recording.md) · satisfies REQ-120–124
 - **Live (streaming) transcription** — chunk ASR during recording (silence-aligned cuts, <30 s, timestamps offset), one global diarization pass at finish; a *separate* PCM-stream ingest path, local-only, enhancement skipped as a tradeoff. → [`adr/0014`](adr/0014-live-streaming-transcription.md) · satisfies REQ-125–131
+- **Editable & finalizable notes** — edits are an overlay (`edited_note`) that never overwrites the AI original (`note`); a `draft`→`final` lifecycle (`finalized_at` + edit-lock) with reopen + revert-to-AI. First slice of the patient/encounter product tier. → [`adr/0015`](adr/0015-editable-finalizable-notes.md) · satisfies REQ-132–136
 
 ## Error-handling & fallback strategy
 

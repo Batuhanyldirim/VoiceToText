@@ -18,6 +18,7 @@ import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import type { ActiveJob, ActiveNote, SavedNoteSummary } from "../types";
 import {
   deleteNote,
@@ -297,17 +298,32 @@ export default function NotesSidebar({
                       sx={{ color: selected ? "primary.main" : "text.disabled", flexShrink: 0 }}
                     />
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="body2"
-                        noWrap
-                        sx={{ fontWeight: selected ? 700 : 500 }}
-                        title={n.title}
-                      >
-                        {n.title || "(başlıksız)"}
-                      </Typography>
+                      <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", minWidth: 0 }}>
+                        {n.status === "final" && (
+                          <Tooltip title="Tamamlandı">
+                            <CheckCircleRoundedIcon
+                              sx={{ fontSize: 14, color: "success.main", flexShrink: 0 }}
+                            />
+                          </Tooltip>
+                        )}
+                        <Typography
+                          variant="body2"
+                          noWrap
+                          sx={{ fontWeight: selected ? 700 : 500 }}
+                          title={n.title}
+                        >
+                          {n.title || "(başlıksız)"}
+                        </Typography>
+                      </Stack>
                       <Typography variant="caption" color="text.secondary" noWrap>
                         {formatDate(n.created_at)}
-                        {n.note_seconds != null && ` · Not: ${formatSeconds(n.note_seconds)}`}
+                        {n.status === "final"
+                          ? " · Tamamlandı"
+                          : n.edited
+                            ? " · Düzenlendi"
+                            : n.note_seconds != null
+                              ? ` · Not: ${formatSeconds(n.note_seconds)}`
+                              : ""}
                       </Typography>
                     </Box>
                   </Stack>

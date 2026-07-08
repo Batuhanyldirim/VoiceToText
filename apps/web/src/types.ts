@@ -216,6 +216,10 @@ export interface SavedNoteSummary {
   template: string;
   transcribe_seconds: number | null;
   note_seconds: number | null;
+  // Edit/finalize lifecycle (ADR-0015).
+  status?: NoteLifecycle;
+  finalized_at?: string | null;
+  edited?: boolean;
 }
 
 /** POST /notes response. */
@@ -234,6 +238,9 @@ export interface NoteResult {
   usage: Record<string, unknown>;
 }
 
+/** Edit/finalize lifecycle state of a saved note (ADR-0015). */
+export type NoteLifecycle = "draft" | "final";
+
 /** GET /notes/{id} response — the note job status + result. */
 export interface Note {
   note_id: string;
@@ -241,13 +248,19 @@ export interface Note {
   provider: string | null;
   model: string | null;
   template: string | null;
-  note: string | null;
+  note: string | null;          // EFFECTIVE body (clinician edit if any, else AI)
   result: NoteResult | null;
   error: string | null;
   transcribe_seconds?: number | null;
   note_seconds?: number | null;
   started_at?: number | null;
   created_at?: string | null;
+  // Edit/finalize lifecycle (present once the note is persisted; ADR-0015).
+  ai_note?: string | null;        // the AI's original output (for revert/compare)
+  edited_note?: string | null;    // the clinician overlay (null = untouched)
+  edited?: boolean;
+  note_status?: NoteLifecycle;    // draft | final
+  finalized_at?: string | null;
 }
 
 /**

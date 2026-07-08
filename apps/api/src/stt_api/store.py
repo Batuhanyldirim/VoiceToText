@@ -35,12 +35,26 @@ class SavedNote:
     model: str
     template: str
     transcript: str
-    note: str
+    note: str                  # the AI's ORIGINAL output — never overwritten (ADR-0015)
     # Timing metrics (seconds). transcribe_seconds is carried from the source
     # transcript (may be None for reused transcripts predating the feature);
     # note_seconds is the wall-clock note generation time. Both nullable.
     transcribe_seconds: Optional[float] = None
     note_seconds: Optional[float] = None
+    # Edit/finalize lifecycle (ADR-0015). edited_note is the clinician's overlay
+    # (NULL = untouched); status is draft|final; finalized_at stamps the sign-off.
+    edited_note: Optional[str] = None
+    status: str = "draft"
+    finalized_at: Optional[str] = None
+
+    @property
+    def effective_note(self) -> str:
+        """The current body: the clinician's edit if present, else the AI original."""
+        return self.edited_note if self.edited_note is not None else self.note
+
+    @property
+    def edited(self) -> bool:
+        return self.edited_note is not None
 
     def summary(self) -> dict:
         """List-view shape (no heavy transcript/note bodies)."""
@@ -54,12 +68,19 @@ class SavedNote:
             "template": self.template,
             "transcribe_seconds": self.transcribe_seconds,
             "note_seconds": self.note_seconds,
+            "status": self.status,
+            "finalized_at": self.finalized_at,
+            "edited": self.edited,
         }
 
     def to_dict(self) -> dict:
         d = self.summary()
         d["transcript"] = self.transcript
-        d["note"] = self.note
+        # `note` is the effective (current) body so existing consumers keep
+        # working; `ai_note` exposes the original for the revert/compare affordance.
+        d["note"] = self.effective_note
+        d["ai_note"] = self.note
+        d["edited_note"] = self.edited_note
         return d
 
 
@@ -93,12 +114,20 @@ class NoteStore:
                 )
                 """
             )
-            # Lightweight migration: add the timing columns to a pre-existing
-            # table (CREATE TABLE IF NOT EXISTS won't alter an older schema).
+            # Lightweight migration: add newer columns to a pre-existing table
+            # (CREATE TABLE IF NOT EXISTS won't alter an older schema). Each ADD
+            # is guarded by a column-existence check so it's safe to re-run.
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(notes)")}
             for col in ("transcribe_seconds", "note_seconds"):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE notes ADD COLUMN {col} REAL")
+            # Edit/finalize lifecycle columns (ADR-0015).
+            if "edited_note" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN edited_note TEXT")
+            if "status" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'")
+            if "finalized_at" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN finalized_at TEXT")
 
     def save(self, note: SavedNote) -> None:
         with self._connect() as conn:
@@ -106,12 +135,14 @@ class NoteStore:
                 """
                 INSERT OR REPLACE INTO notes
                     (id, created_at, title, source_name, provider, model, template,
-                     transcript, note, transcribe_seconds, note_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     transcript, note, transcribe_seconds, note_seconds,
+                     edited_note, status, finalized_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
-                 note.transcribe_seconds, note.note_seconds),
+                 note.transcribe_seconds, note.note_seconds,
+                 note.edited_note, note.status, note.finalized_at),
             )
 
     def list(self) -> list[dict]:
@@ -119,10 +150,30 @@ class NoteStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, created_at, title, source_name, provider, model, template, "
-                "transcribe_seconds, note_seconds "
+                "transcribe_seconds, note_seconds, "
+                "edited_note, status, finalized_at "
                 "FROM notes ORDER BY created_at DESC"
             ).fetchall()
-        return [dict(r) for r in rows]
+        # Build via SavedNote-less summary so `edited` (edited_note != NULL) and
+        # the status fields are consistent with get()/to_dict().
+        out = []
+        for r in rows:
+            d = dict(r)
+            out.append({
+                "id": d["id"],
+                "created_at": d["created_at"],
+                "title": d["title"],
+                "source_name": d["source_name"],
+                "provider": d["provider"],
+                "model": d["model"],
+                "template": d["template"],
+                "transcribe_seconds": d["transcribe_seconds"],
+                "note_seconds": d["note_seconds"],
+                "status": d["status"] or "draft",
+                "finalized_at": d["finalized_at"],
+                "edited": d["edited_note"] is not None,
+            })
+        return out
 
     def get(self, note_id: str) -> Optional[SavedNote]:
         with self._connect() as conn:
@@ -135,3 +186,52 @@ class NoteStore:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         return cur.rowcount > 0
+
+    # --- edit / finalize lifecycle (ADR-0015) --------------------------------
+
+    def update_body(self, note_id: str, edited: str) -> Optional[SavedNote]:
+        """Save a clinician-edited body as an overlay (never touches `note`).
+        Returns None if the note is missing; raises _Locked if it's final."""
+        note = self.get(note_id)
+        if not note:
+            return None
+        if note.status == "final":
+            raise NoteLockedError("note is finalized; reopen it before editing")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET edited_note = ? WHERE id = ?", (edited, note_id)
+            )
+        note.edited_note = edited
+        return note
+
+    def revert(self, note_id: str) -> Optional[SavedNote]:
+        """Clear the edit overlay so the effective body is the AI original again."""
+        note = self.get(note_id)
+        if not note:
+            return None
+        if note.status == "final":
+            raise NoteLockedError("note is finalized; reopen it before reverting")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET edited_note = NULL WHERE id = ?", (note_id,)
+            )
+        note.edited_note = None
+        return note
+
+    def set_status(self, note_id: str, status: str, finalized_at: Optional[str]) -> Optional[SavedNote]:
+        """Set draft/final + the finalize timestamp (None clears it on reopen)."""
+        note = self.get(note_id)
+        if not note:
+            return None
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET status = ?, finalized_at = ? WHERE id = ?",
+                (status, finalized_at, note_id),
+            )
+        note.status = status
+        note.finalized_at = finalized_at
+        return note
+
+
+class NoteLockedError(RuntimeError):
+    """Raised when an edit/revert is attempted on a finalized note (ADR-0015)."""
