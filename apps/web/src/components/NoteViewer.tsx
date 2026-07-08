@@ -24,6 +24,7 @@ import type { Note, NoteSSEPayload, NoteStage } from "../types";
 import { ApiError, getNote, noteEventsUrl } from "../config/api";
 import { useElapsed } from "../hooks/useElapsed";
 import { formatSeconds } from "../utils/format";
+import Markdown from "./Markdown";
 
 // A vanished note job (server restarted mid-run) surfaces as a 404 — terminal.
 const GONE_MESSAGE =
@@ -415,11 +416,13 @@ export default function NoteViewer({
       ) : (
         <>
           <Card>
-            <CardContent>
-              {body || isGenerating ? (
-                <Box component="pre" sx={NOTE_TEXT_SX}>
-                  {body}
-                  {isGenerating && (
+            <CardContent sx={{ px: { xs: 2, sm: 3 }, py: { xs: 2, sm: 2.5 } }}>
+              {isGenerating ? (
+                // While streaming, show the raw markdown as it types (with a
+                // blinking cursor) — partial markdown would render half-formatted.
+                body ? (
+                  <Box component="pre" sx={NOTE_TEXT_SX}>
+                    {body}
                     <Box
                       component="span"
                       sx={{
@@ -431,13 +434,18 @@ export default function NoteViewer({
                         bgcolor: "primary.main",
                         borderRadius: 0.5,
                         animation: "note-blink 1s step-end infinite",
-                        "@keyframes note-blink": {
-                          "50%": { opacity: 0 },
-                        },
+                        "@keyframes note-blink": { "50%": { opacity: 0 } },
                       }}
                     />
-                  )}
-                </Box>
+                  </Box>
+                ) : (
+                  <Typography color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
+                    {message}
+                  </Typography>
+                )
+              ) : body ? (
+                // Done: render the note as formatted markdown for readability.
+                <Markdown>{body}</Markdown>
               ) : (
                 <Typography color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
                   {message}
@@ -466,9 +474,7 @@ export default function NoteViewer({
                   </Typography>
                 </Stack>
                 <Divider sx={{ mb: 1.5 }} />
-                <Box component="pre" sx={NOTE_TEXT_SX}>
-                  {review}
-                </Box>
+                <Markdown stripFirstHeading>{review}</Markdown>
               </CardContent>
             </Card>
           )}
