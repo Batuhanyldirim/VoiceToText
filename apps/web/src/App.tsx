@@ -251,9 +251,19 @@ export default function App() {
   );
 
   // Start a brand-new note from the source picker (reuse an existing transcript
-  // or route to upload). Reachable from the sidebar and the upload screen.
+  // or route to upload). Used by the upload screen's "Mevcut deşifreyi kullan".
   const handleNewNote = useCallback(() => {
     setView({ screen: "note-source" });
+  }, []);
+
+  // Sidebar "Yeni not" → the main capture screen (upload / record / live +
+  // "Mevcut deşifreyi kullan"), not the reuse-only source picker. Clears any
+  // in-progress file/error so it's a clean start.
+  const handleNewFromSidebar = useCallback(() => {
+    setFile(null);
+    setFileName(null);
+    setSubmitError(null);
+    setView({ screen: "upload" });
   }, []);
 
   // Open a saved note read-only (from the sidebar).
@@ -370,7 +380,7 @@ export default function App() {
             onOpenNote={handleOpenNote}
             onOpenJob={handleOpenJob}
             onOpenActiveNote={handleOpenActiveNote}
-            onNewNote={handleNewNote}
+            onNewNote={handleNewFromSidebar}
             onCollapse={() => setSidebarOpen(false)}
             refreshToken={notesRefresh}
           />
