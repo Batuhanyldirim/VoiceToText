@@ -140,6 +140,21 @@ def test_get_unknown_patient_404(client):
     assert client.get("/patients/nope").status_code == 404
 
 
+def test_patient_detail_has_rollup_and_last_visit(client):
+    import stt_api.main as main
+    pid = client.post("/patients", json={"name": "Ayşe"}).json()["id"]
+    _seed_note(client, "n1")
+    client.put("/notes/n1/patient", json={"patient_id": pid})
+    main.note_store.set_extraction("n1", [{"name": "Hipertansiyon"}], [{"name": "Ramipril"}])
+    d = client.get(f"/patients/{pid}").json()
+    assert [x["name"] for x in d["problems_summary"]] == ["Hipertansiyon"]
+    assert [x["name"] for x in d["medications_summary"]] == ["Ramipril"]
+    assert [n["id"] for n in d["notes"]] == ["n1"]
+    # patient list carries last_visit_at + count
+    row = next(p for p in client.get("/patients").json()["patients"] if p["id"] == pid)
+    assert row["note_count"] == 1 and row["last_visit_at"]
+
+
 # --- search (ADR-0018) ------------------------------------------------------
 
 def test_search_endpoint(client):

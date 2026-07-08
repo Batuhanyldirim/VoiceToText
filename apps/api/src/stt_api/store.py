@@ -578,15 +578,44 @@ class NoteStore:
         return Patient(**dict(row)) if row else None
 
     def list_patients(self) -> list[dict]:
-        """All patients (name order) with each one's note count."""
+        """All patients (name order) with each one's note count + last-visit date
+        (max note created_at), for the patient list (ADR-0024)."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT p.id, p.name, p.mrn, p.created_at, "
-                "COUNT(n.id) AS note_count "
+                "COUNT(n.id) AS note_count, MAX(n.created_at) AS last_visit_at "
                 "FROM patients p LEFT JOIN notes n ON n.patient_id = p.id "
                 "GROUP BY p.id ORDER BY lower(p.name)"
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def patient_rollup(self, patient_id: str) -> tuple[list, list]:
+        """The de-duplicated UNION of extracted problems + medications across a
+        patient's notes (ADR-0024). Pure aggregation over stored extractions — no
+        model call. De-dup by normalized (case-folded, trimmed) name; first
+        occurrence wins (keeps its detail). Empty when no note has extractions."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT problems_json, medications_json FROM notes "
+                "WHERE patient_id = ? ORDER BY created_at DESC",
+                (patient_id,),
+            ).fetchall()
+
+        def merge(field: str) -> list:
+            seen: dict = {}
+            for r in rows:
+                for item in _parse_json_list(r[field]):
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "").strip()
+                    if not name:
+                        continue
+                    key = name.casefold()
+                    if key not in seen:
+                        seen[key] = item
+            return list(seen.values())
+
+        return merge("problems_json"), merge("medications_json")
 
     def set_note_patient(self, note_id: str, patient_id: Optional[str]) -> Optional[SavedNote]:
         """(Re)file a note under a patient, or clear it (patient_id=None). Allowed

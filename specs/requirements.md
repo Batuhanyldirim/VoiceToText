@@ -466,6 +466,33 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## Patient pages & navigation
+
+The app gains real, URL-addressable pages built around the patient — a patient
+list and a per-patient page — layered on top of the existing capture/note
+workspace via client-side routing. *(→ ADR-0024, ADR-0016, ADR-0022, ADR-0023)*
+
+- **REQ-160** (Ubiquitous) — THE web app SHALL provide bookmarkable routes: `/`
+  (the capture + note workspace, unchanged), `/patients` (the patient list), and
+  `/patients/:id` (a patient page), with browser back/forward working. The
+  persistent sidebar SHALL remain as quick access alongside the routed main pane.
+  *(→ ADR-0024)*
+- **REQ-161** (Event) — WHEN the user opens the patient list, THE SYSTEM SHALL show
+  every patient with name, MRN, encounter (note) count, and last-visit date, be
+  searchable by name/MRN, and let the user create a patient and open one. *(→
+  ADR-0024, ADR-0016)*
+- **REQ-162** (Event) — WHEN the user opens a patient page (`GET /patients/{id}`),
+  THE SYSTEM SHALL show the patient header (name, MRN, encounter count, last
+  visit), an **encounter timeline** (each note: date, visit type, chief complaint,
+  draft/final), and a **rolled-up summary** — the **union** of the extracted
+  problem and medication lists across that patient's notes, de-duplicated by name
+  (no extra AI call) — plus a **"Bu hasta için yeni muayene"** action that
+  pre-assigns the patient. *(→ ADR-0024, ADR-0023, ADR-0022)*
+- **REQ-163** (Ubiquitous) — THE SYSTEM SHALL expose the rollup on the patient
+  detail response (`problems_summary`, `medications_summary`) computed server-side
+  from the patient's notes' stored extractions; a patient with no extracted notes
+  SHALL yield empty summaries (never fabricated). *(→ ADR-0024, ADR-0023)*
+
 ## Problem & medication extraction (Tier 3)
 
 Turn a finished note into a structured **problem list** and **medication list** so

@@ -897,12 +897,16 @@ def create_patient(body: PatientBody) -> dict:
 
 @app.get("/patients/{patient_id}")
 def get_patient(patient_id: str) -> dict:
-    """A patient + its notes (summary rows, newest-first)."""
+    """A patient + its notes (newest-first) + the union rollup of problems/meds
+    across those notes (ADR-0024). Rollup is pure aggregation — no model call."""
     patient = note_store.get_patient(patient_id)
     if not patient:
         raise HTTPException(404, "patient not found")
     d = patient.to_dict()
     d["notes"] = note_store.list(patient_id=patient_id)
+    problems, medications = note_store.patient_rollup(patient_id)
+    d["problems_summary"] = problems
+    d["medications_summary"] = medications
     return d
 
 

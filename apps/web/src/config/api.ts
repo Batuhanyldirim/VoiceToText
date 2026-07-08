@@ -16,6 +16,7 @@ import type {
   NoteTemplatesResponse,
   NoteVersion,
   Patient,
+  PatientDetail,
   ProvidersResponse,
   SavedNoteSummary,
   StreamStatus,
@@ -419,11 +420,17 @@ export async function restoreNoteVersion(
 // Patient organization (ADR-0016)
 // ---------------------------------------------------------------------------
 
-/** List all patients (name order) with each one's note count. */
+/** List all patients (name order) with each one's note count + last visit. */
 export async function listPatients(signal?: AbortSignal): Promise<Patient[]> {
   const res = await fetch(`${API}/patients`, { signal });
   const body = await asJson<{ patients: Patient[] }>(res);
   return body.patients ?? [];
+}
+
+/** A patient + its notes + the union problem/med rollup (ADR-0024). */
+export async function getPatient(id: string, signal?: AbortSignal): Promise<PatientDetail> {
+  const res = await fetch(`${API}/patients/${encodeURIComponent(id)}`, { signal });
+  return asJson<PatientDetail>(res);
 }
 
 /** Create a patient — or reuse an existing one with the same name. */

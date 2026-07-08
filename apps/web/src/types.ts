@@ -241,6 +241,9 @@ export interface SavedNoteSummary {
   // Patient organization (ADR-0016).
   patient_id?: string | null;
   patient_name?: string | null;
+  // Encounter metadata (ADR-0022) — also returned by the list query.
+  visit_type?: string | null;
+  chief_complaint?: string | null;
 }
 
 /** POST /notes response. */
@@ -278,6 +281,16 @@ export interface Patient {
   mrn: string | null;
   created_at: string;
   note_count?: number;
+  /** Most recent note's created_at (patient list; ADR-0024). */
+  last_visit_at?: string | null;
+}
+
+/** GET /patients/{id} — a patient + its notes + the union problem/med rollup
+ *  across those notes (ADR-0024). */
+export interface PatientDetail extends Patient {
+  notes: SavedNoteSummary[];
+  problems_summary: Problem[];
+  medications_summary: Medication[];
 }
 
 /** GET /notes/{id} response — the note job status + result. */

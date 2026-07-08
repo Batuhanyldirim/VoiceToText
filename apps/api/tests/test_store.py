@@ -167,6 +167,41 @@ def test_search_blank_returns_all(store):
     assert len(store.list(q="   ")) == 2
 
 
+# --- patient rollup (ADR-0024) ----------------------------------------------
+
+def test_patient_rollup_unions_and_dedups(store):
+    p = store.create_patient("Ayşe")
+    make_saved_note(store, "n_new", patient_id=p.id, created_at="2026-07-08T02:00:00Z")
+    store.set_extraction("n_new", [{"name": "Hipertansiyon", "status": "aktif"}],
+                         [{"name": "Ramipril", "dose": "5mg"}])
+    make_saved_note(store, "n_old", patient_id=p.id, created_at="2026-07-08T01:00:00Z")
+    store.set_extraction("n_old", [{"name": "hipertansiyon"}, {"name": "Diyabet"}],
+                         [{"name": "Metformin"}])
+    problems, meds = store.patient_rollup(p.id)
+    # deduped by case-folded name, newest-first (Hipertansiyon before Diyabet)
+    assert [x["name"] for x in problems] == ["Hipertansiyon", "Diyabet"]
+    assert [x["name"] for x in meds] == ["Ramipril", "Metformin"]
+
+
+def test_patient_rollup_ignores_other_patients_and_empty(store):
+    p = store.create_patient("Ayşe")
+    other = store.create_patient("Ali")
+    make_saved_note(store, "mine", patient_id=p.id)  # no extraction
+    make_saved_note(store, "theirs", patient_id=other.id)
+    store.set_extraction("theirs", [{"name": "Astım"}], [{"name": "Ventolin"}])
+    problems, meds = store.patient_rollup(p.id)
+    assert problems == [] and meds == []  # no extraction on p's notes; no leak
+
+
+def test_list_patients_has_counts_and_last_visit(store):
+    p = store.create_patient("Ayşe")
+    make_saved_note(store, "a", patient_id=p.id, created_at="2026-07-08T01:00:00Z")
+    make_saved_note(store, "b", patient_id=p.id, created_at="2026-07-08T03:00:00Z")
+    row = next(r for r in store.list_patients() if r["id"] == p.id)
+    assert row["note_count"] == 2
+    assert row["last_visit_at"] == "2026-07-08T03:00:00Z"
+
+
 # --- problem & medication extraction (ADR-0023) -----------------------------
 
 def test_set_extraction_persists_and_parses(store):
