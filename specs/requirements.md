@@ -466,6 +466,25 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## Home dashboard & navigation
+
+A landing page ("Bugün") and clearly-visible primary navigation. *(→ ADR-0025,
+ADR-0024)*
+
+- **REQ-164** (Event) — WHEN the user opens the app root, THE SYSTEM SHALL show a
+  **home/"Bugün" dashboard** at `/` with: a primary **"Yeni muayene"** action,
+  **today's encounters** (notes created today), **resume** for any in-progress
+  transcriptions/notes, a **needs-attention** view (draft/unsigned notes), and
+  quick stats (patient count, notes this week). The capture flow moves to
+  `/yeni` (kept fully intact). *(→ ADR-0025, ADR-0024)*
+- **REQ-165** (Ubiquitous) — THE web app SHALL present **clearly-labeled primary
+  navigation** — Ana Sayfa, Hastalar, Yeni muayene — persistently visible with an
+  active-state indication, so the patient list and home are easy to find (not a
+  bare unlabeled icon). *(→ ADR-0025)*
+- **REQ-166** (Ubiquitous) — THE home dashboard SHALL be composed from existing
+  endpoints (`GET /notes`, `/jobs`, `/notes/active`, `/patients`) with **no new
+  backend**, computing today/this-week/draft groupings client-side. *(→ ADR-0025)*
+
 ## Patient pages & navigation
 
 The app gains real, URL-addressable pages built around the patient — a patient

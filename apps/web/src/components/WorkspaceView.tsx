@@ -54,7 +54,7 @@ function viewToPersisted(view: View, fileName: string | null): PersistedView | n
  *  it navigates here from another route), then strip it so a refresh is clean. */
 function consumeOpenIntent(): View | null {
   const q = new URLSearchParams(window.location.search);
-  const clear = () => window.history.replaceState({}, "", "/");
+  const clear = () => window.history.replaceState({}, "", "/yeni");
   if (q.get("new") === "1") {
     clear();
     return { screen: "upload" };
@@ -168,7 +168,7 @@ export default function WorkspaceView() {
   // doesn't remount, so we listen for the navigate event and consume the intent).
   useEffect(() => {
     const onNav = () => {
-      if (window.location.pathname !== "/") return;
+      if (window.location.pathname !== "/yeni") return;
       const intent = consumeOpenIntent();
       if (intent) setView(intent);
     };

@@ -2,21 +2,25 @@ import { useState, type ReactNode } from "react";
 import {
   AppBar,
   Box,
+  Button,
   IconButton,
+  Stack,
   Toolbar,
   Tooltip,
   Typography,
 } from "@mui/material";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
+import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
+import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import NotesSidebar, { SIDEBAR_WIDTH } from "./NotesSidebar";
-import { navigate } from "../utils/router";
+import { navigate, usePath } from "../utils/router";
 
-// Persistent app chrome (sidebar + top bar) shared by every route (ADR-0024).
-// The routed page is passed as children. Sidebar actions navigate: opening a note
-// or job routes to the workspace ("/") with a query param it reads to open the
-// right screen; "Yeni not" routes to a clean "/".
+// Persistent app chrome (sidebar + top bar) shared by every route (ADR-0024/0025).
+// The routed page is passed as children. Primary nav (Ana Sayfa / Hastalar / Yeni
+// muayene) is labeled + active-highlighted so pages are discoverable. Sidebar note
+// actions navigate to /yeni with a query the workspace consumes.
 
 interface AppShellProps {
   children: ReactNode;
@@ -28,6 +32,12 @@ interface AppShellProps {
 
 export default function AppShell({ children, activeId = null, refreshToken = 0 }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const path = usePath();
+
+  const navItems = [
+    { label: "Ana Sayfa", icon: <HomeRoundedIcon fontSize="small" />, to: "/", active: path === "/" },
+    { label: "Hastalar", icon: <PeopleAltRoundedIcon fontSize="small" />, to: "/patients", active: path === "/patients" || path.startsWith("/patients/") },
+  ];
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh", bgcolor: "background.default" }}>
@@ -42,17 +52,53 @@ export default function AppShell({ children, activeId = null, refreshToken = 0 }
           position: "sticky",
           top: 0,
           height: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          bgcolor: "background.paper",
         }}
       >
-        <NotesSidebar
-          activeId={activeId}
-          onOpenNote={(id) => navigate(`/?note=${encodeURIComponent(id)}`)}
-          onOpenJob={(id) => navigate(`/?job=${encodeURIComponent(id)}`)}
-          onOpenActiveNote={(id) => navigate(`/?activeNote=${encodeURIComponent(id)}`)}
-          onNewNote={() => navigate("/?new=1")}
-          onCollapse={() => setSidebarOpen(false)}
-          refreshToken={refreshToken}
-        />
+        {/* Primary navigation — labeled + active-highlighted (REQ-165). */}
+        <Stack spacing={0.5} sx={{ p: 1.5, pb: 1 }}>
+          <Button
+            variant="contained"
+            fullWidth
+            startIcon={<AddRoundedIcon />}
+            onClick={() => navigate("/yeni?new=1")}
+            sx={{ justifyContent: "flex-start", mb: 0.5 }}
+          >
+            Yeni muayene
+          </Button>
+          {navItems.map((item) => (
+            <Button
+              key={item.to}
+              fullWidth
+              startIcon={item.icon}
+              onClick={() => navigate(item.to)}
+              sx={{
+                justifyContent: "flex-start",
+                color: item.active ? "primary.main" : "text.secondary",
+                bgcolor: item.active ? "primary.light" : "transparent",
+                fontWeight: item.active ? 700 : 500,
+                "&:hover": { bgcolor: item.active ? "primary.light" : "action.hover" },
+              }}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </Stack>
+
+        {/* Note history / sessions list fills the rest. */}
+        <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <NotesSidebar
+            activeId={activeId}
+            onOpenNote={(id) => navigate(`/yeni?note=${encodeURIComponent(id)}`)}
+            onOpenJob={(id) => navigate(`/yeni?job=${encodeURIComponent(id)}`)}
+            onOpenActiveNote={(id) => navigate(`/yeni?activeNote=${encodeURIComponent(id)}`)}
+            onNewNote={() => navigate("/yeni?new=1")}
+            onCollapse={() => setSidebarOpen(false)}
+            refreshToken={refreshToken}
+          />
+        </Box>
       </Box>
 
       {/* Main column */}
@@ -78,7 +124,7 @@ export default function AppShell({ children, activeId = null, refreshToken = 0 }
             )}
             <Box
               sx={{ display: "flex", alignItems: "center", gap: 1.25, cursor: "pointer" }}
-              onClick={() => navigate("/?new=1")}
+              onClick={() => navigate("/")}
             >
               <Box
                 sx={{
@@ -101,16 +147,28 @@ export default function AppShell({ children, activeId = null, refreshToken = 0 }
 
             <Box sx={{ flexGrow: 1 }} />
 
-            <Tooltip title="Hastalar">
-              <IconButton
-                onClick={() => navigate("/patients")}
-                aria-label="Hastalar"
+            {/* Top-bar nav mirrors the sidebar for when it's collapsed. */}
+            <Stack direction="row" spacing={0.5}>
+              <Button
+                startIcon={<HomeRoundedIcon />}
+                onClick={() => navigate("/")}
                 color="inherit"
-                sx={{ color: "text.secondary" }}
+                sx={{ color: path === "/" ? "primary.main" : "text.secondary", fontWeight: path === "/" ? 700 : 500 }}
               >
-                <PeopleAltRoundedIcon />
-              </IconButton>
-            </Tooltip>
+                Ana Sayfa
+              </Button>
+              <Button
+                startIcon={<PeopleAltRoundedIcon />}
+                onClick={() => navigate("/patients")}
+                color="inherit"
+                sx={{
+                  color: path.startsWith("/patients") ? "primary.main" : "text.secondary",
+                  fontWeight: path.startsWith("/patients") ? 700 : 500,
+                }}
+              >
+                Hastalar
+              </Button>
+            </Stack>
           </Toolbar>
         </AppBar>
 
