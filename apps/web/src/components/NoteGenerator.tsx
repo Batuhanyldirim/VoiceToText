@@ -64,6 +64,9 @@ interface NoteGeneratorProps {
   transcript?: string;
   /** Source name for the pre-loaded transcript (used to build the note title). */
   sourceName?: string;
+  /** How long the pre-loaded transcript took to transcribe (fresh-transcription
+   *  flow), carried into the note so it can show both timings. */
+  transcribeSeconds?: number | null;
   onGenerating: (noteId: string) => void;
   onBack: () => void;
   /** Route back to the upload flow (for the "new file" source option). */
@@ -73,6 +76,7 @@ interface NoteGeneratorProps {
 export default function NoteGenerator({
   transcript,
   sourceName,
+  transcribeSeconds,
   onGenerating,
   onBack,
   onNeedTranscript,
@@ -104,11 +108,13 @@ export default function NoteGenerator({
   const [selectedName, setSelectedName] = useState("");
   const [loadedText, setLoadedText] = useState<string | null>(null);
   const [loadedName, setLoadedName] = useState<string | null>(null);
+  const [loadedSeconds, setLoadedSeconds] = useState<number | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
 
-  // The transcript text + source name actually used for generation.
+  // The transcript text + source name + transcription time used for generation.
   const effectiveTranscript = preloaded ? transcript! : loadedText ?? "";
   const effectiveSource = preloaded ? sourceName ?? null : loadedName;
+  const effectiveSeconds = preloaded ? transcribeSeconds ?? null : loadedSeconds;
 
   useEffect(() => {
     const abort = new AbortController();
@@ -198,6 +204,7 @@ export default function NoteGenerator({
     setSelectedName(name);
     setLoadedText(null);
     setLoadedName(null);
+    setLoadedSeconds(null);
     if (!name) return;
     setTranscriptLoading(true);
     setTranscriptsError(null);
@@ -205,6 +212,7 @@ export default function NoteGenerator({
       const t = await getTranscript(name);
       setLoadedText(t.text);
       setLoadedName(t.name);
+      setLoadedSeconds(t.transcribe_seconds ?? null);
     } catch (e) {
       setTranscriptsError(
         e instanceof Error
@@ -247,6 +255,7 @@ export default function NoteGenerator({
     };
     if (model) body.model = model;
     if (effectiveSource) body.source_name = effectiveSource;
+    if (typeof effectiveSeconds === "number") body.transcribe_seconds = effectiveSeconds;
     if (isFree) body.template_text = templateText;
     try {
       const { note_id } = await createNote(body);
@@ -263,6 +272,7 @@ export default function NoteGenerator({
   }, [
     effectiveTranscript,
     effectiveSource,
+    effectiveSeconds,
     template,
     activeChoice,
     isFree,

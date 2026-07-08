@@ -42,6 +42,15 @@ function formatDate(value: string): string {
   });
 }
 
+/** Compact duration: "42 sn" / "2 dk 18 sn". */
+function formatSeconds(s: number): string {
+  const total = Math.round(s);
+  if (total < 60) return `${total} sn`;
+  const m = Math.floor(total / 60);
+  const rem = total % 60;
+  return rem ? `${m} dk ${rem} sn` : `${m} dk`;
+}
+
 export default function NotesSidebar({
   activeNoteId,
   onOpenNote,
@@ -199,6 +208,8 @@ export default function NotesSidebar({
                       </Typography>
                       <Typography variant="caption" color="text.secondary" noWrap>
                         {formatDate(n.created_at)}
+                        {n.note_seconds != null &&
+                          ` · Not: ${formatSeconds(n.note_seconds)}`}
                       </Typography>
                     </Box>
                   </Stack>

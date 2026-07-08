@@ -36,6 +36,11 @@ class SavedNote:
     template: str
     transcript: str
     note: str
+    # Timing metrics (seconds). transcribe_seconds is carried from the source
+    # transcript (may be None for reused transcripts predating the feature);
+    # note_seconds is the wall-clock note generation time. Both nullable.
+    transcribe_seconds: Optional[float] = None
+    note_seconds: Optional[float] = None
 
     def summary(self) -> dict:
         """List-view shape (no heavy transcript/note bodies)."""
@@ -47,6 +52,8 @@ class SavedNote:
             "provider": self.provider,
             "model": self.model,
             "template": self.template,
+            "transcribe_seconds": self.transcribe_seconds,
+            "note_seconds": self.note_seconds,
         }
 
     def to_dict(self) -> dict:
@@ -80,28 +87,39 @@ class NoteStore:
                     model       TEXT NOT NULL,
                     template    TEXT NOT NULL,
                     transcript  TEXT NOT NULL,
-                    note        TEXT NOT NULL
+                    note        TEXT NOT NULL,
+                    transcribe_seconds REAL,
+                    note_seconds       REAL
                 )
                 """
             )
+            # Lightweight migration: add the timing columns to a pre-existing
+            # table (CREATE TABLE IF NOT EXISTS won't alter an older schema).
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(notes)")}
+            for col in ("transcribe_seconds", "note_seconds"):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE notes ADD COLUMN {col} REAL")
 
     def save(self, note: SavedNote) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO notes
-                    (id, created_at, title, source_name, provider, model, template, transcript, note)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, created_at, title, source_name, provider, model, template,
+                     transcript, note, transcribe_seconds, note_seconds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
-                 note.provider, note.model, note.template, note.transcript, note.note),
+                 note.provider, note.model, note.template, note.transcript, note.note,
+                 note.transcribe_seconds, note.note_seconds),
             )
 
     def list(self) -> list[dict]:
         """Newest first, summary shape (no bodies)."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, created_at, title, source_name, provider, model, template "
+                "SELECT id, created_at, title, source_name, provider, model, template, "
+                "transcribe_seconds, note_seconds "
                 "FROM notes ORDER BY created_at DESC"
             ).fetchall()
         return [dict(r) for r in rows]

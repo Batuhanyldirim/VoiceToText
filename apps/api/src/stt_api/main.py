@@ -240,6 +240,7 @@ def list_transcripts() -> dict:
                 "turns": len(data.get("turns", []) or []),
                 "language": data.get("language"),
                 "num_speakers": data.get("num_speakers"),
+                "transcribe_seconds": data.get("transcribe_seconds"),
             })
     return {"transcripts": items}
 
@@ -265,6 +266,7 @@ def get_transcript(name: str) -> dict:
         "language": data.get("language"),
         "num_speakers": data.get("num_speakers"),
         "text": _transcript_text(data),
+        "transcribe_seconds": data.get("transcribe_seconds"),
     }
 
 
@@ -287,6 +289,9 @@ class NoteRequest(BaseModel):
     model: Optional[str] = None
     title: Optional[str] = None
     source_name: Optional[str] = None
+    # How long the source transcription took (carried from the chosen transcript
+    # or the just-finished job) so the note can report both timings.
+    transcribe_seconds: Optional[float] = None
 
 
 @app.get("/notes")
@@ -356,6 +361,7 @@ async def create_note(body: NoteRequest) -> dict:
     job = note_manager.register(
         body.transcript, opts,
         title=body.title, source_name=body.source_name,
+        transcribe_seconds=body.transcribe_seconds,
     )
     note_manager.submit(job)
     return {"note_id": job.id, "status": job.status}
@@ -374,6 +380,8 @@ def get_note(note_id: str) -> dict:
             "note": job.note_text,       # accumulated text so far
             "result": job.result,
             "error": job.error,
+            "transcribe_seconds": job.transcribe_seconds,
+            "note_seconds": job.note_seconds,
         }
     # Not live in memory — fall back to durable history so browsing a past note
     # returns its full body in the same response shape (status="done").
@@ -398,6 +406,8 @@ def get_note(note_id: str) -> dict:
         "title": saved.title,
         "source_name": saved.source_name,
         "transcript": saved.transcript,
+        "transcribe_seconds": saved.transcribe_seconds,
+        "note_seconds": saved.note_seconds,
     }
 
 

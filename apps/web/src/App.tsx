@@ -282,6 +282,8 @@ export default function App() {
             {view.screen === "note-setup" && (
               <NoteGenerator
                 transcript={view.transcript}
+                sourceName={file?.name ?? undefined}
+                transcribeSeconds={view.result.transcribe_seconds ?? null}
                 onGenerating={handleNoteStarted}
                 onBack={handleBackToTranscript}
               />

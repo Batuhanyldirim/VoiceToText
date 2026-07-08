@@ -53,6 +53,8 @@ class NoteJob:
     error: Optional[str] = None
     title: Optional[str] = None       # display title for the persisted note
     source_name: Optional[str] = None  # transcript stem / uploaded name, if any
+    transcribe_seconds: Optional[float] = None  # carried from the source transcript
+    note_seconds: Optional[float] = None        # wall-clock note generation time
     # asyncio primitives, set when the job is submitted (bound to the running loop)
     queue: Optional[asyncio.Queue] = field(default=None, repr=False)
     loop: Optional[asyncio.AbstractEventLoop] = field(default=None, repr=False)
@@ -80,6 +82,7 @@ class NoteJobManager:
         opts: NoteOptions,
         title: Optional[str] = None,
         source_name: Optional[str] = None,
+        transcribe_seconds: Optional[float] = None,
     ) -> NoteJob:
         note_id = uuid.uuid4().hex[:12]
         if not title:
@@ -91,6 +94,7 @@ class NoteJobManager:
             opts=opts,
             title=title,
             source_name=source_name,
+            transcribe_seconds=transcribe_seconds,
         )
         self._jobs[note_id] = job
         return job
@@ -127,6 +131,8 @@ class NoteJobManager:
                 job.transcript, job.opts,
                 progress=lambda e: self._emit(job, e),
             )
+            # Record wall-clock note-generation time (uniform across providers).
+            job.note_seconds = round(time.monotonic() - t0, 1)
             # Set the result BEFORE emitting "done" (same large-input race fix as
             # transcription): a client reacting to "done" must find it ready.
             job.result = result.to_dict()
@@ -137,7 +143,7 @@ class NoteJobManager:
             self._persist(job, result.note)
             self._emit_terminal(job, NoteEvent(stage="done", message="note complete"))
             log.info("note %s DONE chars=%d in %.1fs", job.id,
-                     len(result.note), time.monotonic() - t0)
+                     len(result.note), job.note_seconds)
         except Exception as e:  # noqa: BLE001 - never let a job kill the server
             job.status = "error"
             job.error = f"{type(e).__name__}: {e}"
@@ -162,6 +168,8 @@ class NoteJobManager:
                 template=job.opts.template,
                 transcript=job.transcript,
                 note=note,
+                transcribe_seconds=job.transcribe_seconds,
+                note_seconds=job.note_seconds,
             ))
             log.info("note %s PERSISTED to store", job.id)
         except Exception as e:  # noqa: BLE001 - persistence must not kill the job

@@ -17,6 +17,8 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
+import TimerOutlinedIcon from "@mui/icons-material/TimerOutlined";
 import type { Note, NoteSSEPayload, NoteStage } from "../types";
 import { ApiError, getNote, noteEventsUrl } from "../config/api";
 
@@ -80,6 +82,9 @@ export default function NoteViewer({
   const [error, setError] = useState<string | null>(null);
   const [transport, setTransport] = useState<"sse" | "polling">("sse");
   const [copied, setCopied] = useState(false);
+  // Timing metrics from the finished note (transcription + note generation).
+  const [noteSeconds, setNoteSeconds] = useState<number | null>(null);
+  const [transcribeSeconds, setTranscribeSeconds] = useState<number | null>(null);
 
   const finishedRef = useRef(false);
   // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
@@ -98,6 +103,9 @@ export default function NoteViewer({
       finishedRef.current = true;
       const finalText = job.result?.note ?? job.note ?? "";
       if (finalText) setNote(finalText);
+      if (typeof job.note_seconds === "number") setNoteSeconds(job.note_seconds);
+      if (typeof job.transcribe_seconds === "number")
+        setTranscribeSeconds(job.transcribe_seconds);
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -303,6 +311,22 @@ export default function NoteViewer({
                 />
               )}
               {isDone && <Chip label="Tamamlandı" size="small" color="success" />}
+              {isDone && transcribeSeconds != null && (
+                <Chip
+                  icon={<GraphicEqRoundedIcon />}
+                  label={`Deşifre: ${formatSeconds(transcribeSeconds)}`}
+                  size="small"
+                  variant="outlined"
+                />
+              )}
+              {isDone && noteSeconds != null && (
+                <Chip
+                  icon={<TimerOutlinedIcon />}
+                  label={`Not: ${formatSeconds(noteSeconds)}`}
+                  size="small"
+                  variant="outlined"
+                />
+              )}
             </Stack>
           </Box>
           {isDone && (
@@ -434,4 +458,13 @@ function parse(raw: string): NoteSSEPayload | null {
   } catch {
     return null;
   }
+}
+
+/** Human-friendly duration: "42 sn" under a minute, "2 dk 18 sn" above. */
+function formatSeconds(s: number): string {
+  const total = Math.round(s);
+  if (total < 60) return `${total} sn`;
+  const m = Math.floor(total / 60);
+  const rem = total % 60;
+  return rem ? `${m} dk ${rem} sn` : `${m} dk`;
 }

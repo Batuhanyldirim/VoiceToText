@@ -105,6 +105,11 @@ class JobManager:
                 progress=lambda e: self._emit(job, e),
                 out_dir=job.out_dir,
             )
+            # Record how long transcription took BEFORE writing files, so the
+            # duration is persisted into <stem>.json (recoverable when the
+            # transcript is later reused to generate a note).
+            elapsed = time.monotonic() - t0
+            result.transcribe_seconds = round(elapsed, 1)
             # write the three output files into the job dir for download
             emit.write_txt(result, job.out_dir)
             emit.write_srt(result, job.out_dir)
@@ -116,7 +121,7 @@ class JobManager:
             job.status = "done"
             self._emit_terminal(job, ProgressEvent(stage="done", percent=100.0))
             log.info("job %s DONE speakers=%d turns=%d in %.1fs", job.id,
-                     result.num_speakers, len(result.turns), time.monotonic() - t0)
+                     result.num_speakers, len(result.turns), elapsed)
         except Exception as e:  # noqa: BLE001 - never let a job kill the server
             job.status = "error"
             job.error = f"{type(e).__name__}: {e}"

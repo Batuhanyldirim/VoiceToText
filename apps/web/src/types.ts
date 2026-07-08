@@ -34,6 +34,7 @@ export interface JobResult {
   speaker_map: Record<string, string>;
   turns: Turn[];
   segments: Segment[];
+  transcribe_seconds?: number | null;
 }
 
 export interface Job {
@@ -130,6 +131,8 @@ export interface CreateNoteBody {
   model?: string;
   title?: string;
   source_name?: string;
+  /** How long the source transcription took (carried so the note shows it). */
+  transcribe_seconds?: number | null;
 }
 
 /** A reusable transcript from out/*.json (GET /transcripts). */
@@ -138,6 +141,7 @@ export interface TranscriptInfo {
   turns: number;
   language: string;
   num_speakers: number;
+  transcribe_seconds: number | null;
 }
 
 /** A chosen transcript's flattened text (GET /transcripts/{name}). */
@@ -146,6 +150,7 @@ export interface TranscriptText {
   language: string;
   num_speakers: number;
   text: string;
+  transcribe_seconds: number | null;
 }
 
 /** One saved note in the history list (GET /notes). */
@@ -157,6 +162,8 @@ export interface SavedNoteSummary {
   provider: string;
   model: string;
   template: string;
+  transcribe_seconds: number | null;
+  note_seconds: number | null;
 }
 
 /** POST /notes response. */
@@ -185,6 +192,8 @@ export interface Note {
   note: string | null;
   result: NoteResult | null;
   error: string | null;
+  transcribe_seconds?: number | null;
+  note_seconds?: number | null;
 }
 
 /**

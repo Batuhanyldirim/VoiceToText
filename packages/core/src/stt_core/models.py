@@ -42,6 +42,10 @@ class TranscribeResult:
     speaker_map: dict = field(default_factory=dict)
     turns: list = field(default_factory=list)        # list[Turn] as dicts when serialized
     segments: list = field(default_factory=list)     # raw WhisperX segments
+    # Wall-clock seconds the transcription took. Persisted into <stem>.json so a
+    # reused transcript can still report how long it took (set by the caller
+    # after transcribe() returns). None for older files that predate this field.
+    transcribe_seconds: Optional[float] = None
 
     def to_dict(self) -> dict:
         """JSON-serializable dict (the shape the old CLI wrote to <name>.json)."""
@@ -52,4 +56,5 @@ class TranscribeResult:
             "speaker_map": self.speaker_map,
             "turns": [t if isinstance(t, dict) else t.__dict__ for t in self.turns],
             "segments": self.segments,
+            "transcribe_seconds": self.transcribe_seconds,
         }
