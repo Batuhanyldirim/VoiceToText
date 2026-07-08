@@ -15,16 +15,20 @@ Ollama). It ships as shared pipeline libraries plus thin CLI/API/web wrappers:
   as an importable function. Holds the load-bearing version pins.
 - **`note_core`** ([`packages/note-core`](packages/note-core)) — pure clinical-note
   generation (`generate(transcript, opts, progress) -> NoteResult`) via a
-  **pluggable AI provider** (local Ollama default, Claude opt-in). Output is
-  **Turkish** (Turkish prompt + templates + A–E headings). → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
+  **selectable, pluggable AI provider** (local Ollama default; more enabled via an
+  operator allowlist over a generic seam). The chosen template **is** the note (+
+  one appended review section). Output is **Turkish**. → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md), [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)
 - **CLI** ([`apps/cli`](apps/cli)) — thin `transcribe` wrapper; same flags/output as before.
 - **API** ([`apps/api`](apps/api)) — FastAPI backend (upload → job → live progress → download; plus note endpoints).
 - **Web** ([`apps/web`](apps/web)) — Vite + React + TS + MUI UI (built on the API).
 
 Product promise is unchanged: **point it at a file, get a transcript — no flags
 required.** The web UI adds a **no-terminal-needed** path, and now a
-transcript → **clinical note draft** step (local by default; PHI stays on-device).
-Full context in [`specs/product.md`](specs/product.md).
+transcript → **clinical note draft** step (local by default; PHI stays on-device),
+a **selectable note provider/model**, **timing chips + a live elapsed timer**, and
+a **sessions sidebar** ("Oturumlar") that shows in-progress work (returnable,
+refresh-safe, retryable) above saved notes. Full context in
+[`specs/product.md`](specs/product.md).
 
 ## Monorepo map
 
@@ -102,14 +106,22 @@ Defaults (authoritative list in [`specs/requirements.md`](specs/requirements.md)
 ### API
 
 ```bash
-source env.sh
-.venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000
-# (equivalently: the `stt-api` console script). Then open http://127.0.0.1:8000/docs
+make api          # sources env.sh inside the recipe (HF_TOKEN + caches +
+                  # STT_NOTE_PROVIDERS/provider dropdown), runs uvicorn — NO --reload
+# editing backend code? use `make api-dev` (reload SCOPED to apps/api/src + packages)
+# manual equivalent: source env.sh && .venv/bin/python -m uvicorn stt_api.main:app --host 127.0.0.1 --port 8000
+# then open http://127.0.0.1:8000/docs
 ```
 
-Endpoints: `POST /jobs` (multipart upload) · `GET /jobs/{id}` (status+result) ·
-`GET /jobs/{id}/events` (SSE progress) · `GET /jobs/{id}/download/{fmt}`
-(`txt`|`srt`|`json`). See [`apps/api/README.md`](apps/api/README.md).
+`make api` deliberately runs **without `--reload`**: jobs live in memory and a
+reload orphans in-flight work (dead SSE stream, "stuck at done"). It also sources
+`env.sh` for you — running bare uvicorn in a shell that didn't source it silently
+drops `HF_TOKEN`, the cache redirects, and the provider selector.
+
+Endpoints: `POST /jobs` (multipart upload) · `GET /jobs` (active transcriptions) ·
+`GET /jobs/{id}` (status+result) · `GET /jobs/{id}/events` (SSE progress) ·
+`POST /jobs/{id}/retry` · `GET /jobs/{id}/download/{fmt}` (`txt`|`srt`|`json`).
+See [`apps/api/README.md`](apps/api/README.md).
 
 ### Web
 
@@ -133,24 +145,46 @@ ollama pull qwen2.5:32b-instruct              # ~20 GB; lands in models/ollama
 ```
 
 Notes are generated in **Turkish** (Turkish prompt + templates "SOAP notu" /
-"Öykü ve Muayene (Ö&M)" + A–E headings; E = "Klinik İnceleme Gerekli" is the
-highlighted review section) and the whole web UI is Turkish. From a completed
-transcript, generate a note via the API note endpoints: `GET /notes/templates` ·
-`POST /notes` · `GET /notes/{id}` (poll) · `GET /notes/{id}/events` (SSE token
-deltas). In the web UI: transcript viewer → pick a template (or paste a serbest
-metin format) → live-streamed note → copy / download `.md`. Cloud (Claude) is
-**opt-in only** — set `STT_NOTE_PROVIDER=claude` plus `STT_CLAUDE_API_KEY` in
-server env (`uv sync --extra claude` for the SDK); a UI banner warns that the
-transcript is sent off-device.
+"Öykü ve Muayene (Ö&M)"; the **chosen template IS the note** + one appended
+"Klinik İnceleme Gerekli" review section) and the whole web UI is Turkish. From a
+completed transcript, generate a note via the API note endpoints:
+`GET /notes/templates` · `GET /notes/providers` · `POST /notes` · `GET /notes/{id}`
+(poll) · `GET /notes/{id}/events` (SSE token deltas). In the web UI: transcript
+viewer → pick a provider/model + template (or paste a serbest metin format) →
+live-streamed note → copy / download `.md`.
 
-Two conveniences layer on top (→ [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)):
-- **Transcript reuse** — instead of re-uploading, pick an existing CLI transcript
-  from `out/` (`GET /transcripts` → `GET /transcripts/{name}`, e.g.
-  `HistoryTaking_YA`) and generate a note from it — a dev-cycle speedup.
-- **Persistent history** — completed notes are saved to a project-local SQLite DB
-  (`apps/api/notes.db`, `STT_DB_PATH` override, git-ignored). Browse them:
-  `GET /notes` (list) · `GET /notes/{id}` (open; also serves saved notes) ·
-  `DELETE /notes/{id}`. The web UI has a history screen (list / open / delete / new).
+**Selectable provider (→ [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)).**
+The committed default exposes **only Ollama** (the provider/model selector hides
+when one provider is enabled). More are enabled by the operator via
+`STT_NOTE_PROVIDERS` (comma list, default `ollama`) — set it in the git-ignored
+`env.local.sh` that `env.sh` sources last. A provider's `off_device` flag drives
+the PHI warning banner. The first-party cloud (Claude) path stays gated behind
+`STT_NOTE_PROVIDER=claude` + a server-env token (`uv sync --extra claude`).
+Machine-specific integrations go in an uncommitted `note_core._local_providers`
+module (self-hidden unless usable) — never in committed code.
+
+**Timing (→ [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)).**
+Transcription/note wall-clock is measured in the worker, persisted
+(`transcribe_seconds` into `out/*.json`; `transcribe_seconds`/`note_seconds`
+columns in the notes DB), and shown as "Deşifre: Xs" / "Not: Ys" + model chips. A
+live elapsed timer is anchored to the server `started_at` so it survives a refresh.
+
+Three conveniences layer on top:
+- **Transcript reuse** (→ [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)) —
+  instead of re-uploading, pick an existing CLI transcript from `out/`
+  (`GET /transcripts` → `GET /transcripts/{name}`, e.g. `HistoryTaking_YA`) and
+  generate a note from it — a dev-cycle speedup.
+- **Persistent history** (→ [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)) —
+  completed notes are saved to a project-local SQLite DB (`apps/api/notes.db`,
+  `STT_DB_PATH` override, git-ignored). Browse: `GET /notes` (list) ·
+  `GET /notes/{id}` (open; also serves saved notes) · `DELETE /notes/{id}`.
+- **Sessions sidebar + retry** (→ [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)) —
+  the web "Oturumlar" sidebar shows active work on top (`GET /jobs`,
+  `GET /notes/active`; spinner + Turkish stage, or ⚠ + "Tekrar dene"), a divider,
+  then saved notes. Failed work retries in place (`POST /jobs/{id}/retry` re-uses
+  the uploaded file on disk; `POST /notes/{id}/retry` re-uses transcript+opts). A
+  `localStorage` pointer + SSE re-attach make an in-progress job survive a page
+  refresh. Active jobs are **in-memory** — a server restart drops them.
 
 ### The PASS/FAIL gate (behavioral — no unit suite)
 
@@ -166,10 +200,12 @@ and confirm `result.num_speakers ≥ 2` (poll `GET /jobs/{id}`). Any change must
 still pass this gate.
 
 **Note gate:** with `ollama serve` running, generating a note from that
-transcript on the default local provider must produce all five **Turkish**
-sections (A–E) including a populated **"Klinik İnceleme Gerekli"**, flag an
-ambiguous term rather than silently "correcting" it, and keep the cloud path
-refused unless `STT_NOTE_PROVIDER=claude` + a token are set.
+transcript on the default local provider must produce a **Turkish** note in the
+chosen template's headings, ending in a populated **"Klinik İnceleme Gerekli"**
+section (and no A–E scaffold / banner / preamble), flag an ambiguous term rather
+than silently "correcting" it, and keep off-device providers refused unless the
+operator enabled them (`STT_NOTE_PROVIDERS`; cloud also needs
+`STT_NOTE_PROVIDER=claude` + a token).
 
 **History round-trip:** reuse a transcript from `out/` (`GET /transcripts` →
 `GET /transcripts/{name}`), generate a note, confirm it appears in `GET /notes`,
@@ -220,6 +256,24 @@ git-ignored (`git status` should never show `notes.db`).
   `STT_DB_PATH`) so `rm -rf` still cleans up and nothing is ever committed. Keep
   the note prompt/templates/UI **Turkish** (REQ-106) — don't revert to English.
   → [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md), [`ADR-0003`](specs/adr/0003-self-contained-caches.md)
+- **Do NOT** hardcode a specific cloud/off-device provider or commit
+  machine-specific integrations. Providers are resolved through a generic seam
+  gated by `STT_NOTE_PROVIDERS` (committed default = only Ollama). Local/off-device
+  ones live in an **uncommitted `note_core._local_providers`** module + git-ignored
+  `env.local.sh`; committed code has no Opus/cloud-CLI wording.
+  → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)
+- **Do NOT** add `--reload` to `make api` or assume jobs are durable. Active
+  transcriptions/notes live **in memory in the server process** — a restart (incl.
+  a reload) **drops in-flight work**. Use `make api-dev` (reload scoped to source
+  dirs) only while editing code; only *completed* notes persist (SQLite).
+  → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md), [`ADR-0008`](specs/adr/0008-fastapi-inprocess-jobs-sse.md)
+- **Do NOT** re-emit the pipeline's own `"done"` to clients. The worker swallows
+  it and emits the authoritative terminal `"done"` only after `job.result` is set —
+  removing that ordering reintroduces the "stuck at done" race on large files.
+  → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)
+- **Do NOT** revive the mandatory A–E note scaffold. The chosen template IS the
+  note (+ one appended "Klinik İnceleme Gerekli"); no banner/preamble, no repeated
+  content. → [`ADR-0009`](specs/adr/0009-clinical-note-pluggable-provider.md)
 
 ## Where to look
 
@@ -234,6 +288,7 @@ git-ignored (`git status` should never show `notes.db`).
 | Run/extend the API | [`apps/api/README.md`](apps/api/README.md) |
 | Run/extend the web UI | [`apps/web/README.md`](apps/web/README.md) |
 | Understand clinical note generation | [`specs/adr/0009-clinical-note-pluggable-provider.md`](specs/adr/0009-clinical-note-pluggable-provider.md) + [`specs/tasks/clinical-note-generation.md`](specs/tasks/clinical-note-generation.md) |
+| Understand the provider seam / timing / sessions | [`specs/adr/0011-selectable-note-provider-plugin-seam.md`](specs/adr/0011-selectable-note-provider-plugin-seam.md) + [`specs/design.md`](specs/design.md) |
 | Add a feature or refactor | copy [`specs/tasks/TEMPLATE.md`](specs/tasks/TEMPLATE.md) |
 
 ## Shipped features
@@ -251,6 +306,17 @@ git-ignored (`git status` should never show `notes.db`).
   notes saved to a project-local, git-ignored SQLite DB (`GET`/`DELETE /notes`,
   `apps/api/notes.db`). → [`ADR-0010`](specs/adr/0010-persistent-notes-sqlite.md)
   (REQ-107–110).
+- **Selectable provider + plugin seam** — pick provider/model in the UI (hidden
+  when one provider); operator allowlist (`STT_NOTE_PROVIDERS`) over a generic seam;
+  git-ignored `_local_providers` + `env.local.sh` for machine-specific/off-device
+  backends; committed repo ships only Ollama. Includes the **note-output reshape**
+  (chosen template IS the note). → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md)
+  (REQ-111–114).
+- **Timing metrics + sessions sidebar** — `transcribe_seconds`/`note_seconds` chips
+  + refresh-safe live timer (anchored to `started_at`); the "Oturumlar" sidebar
+  shows active work (returnable, retryable via `POST /jobs|notes/{id}/retry`,
+  refresh-safe) above saved notes. Active jobs are in-memory (die on restart).
+  → [`ADR-0011`](specs/adr/0011-selectable-note-provider-plugin-seam.md) (REQ-115–119).
 
 ## How to add a feature (the spec-driven loop)
 

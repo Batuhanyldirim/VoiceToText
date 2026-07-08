@@ -154,8 +154,11 @@ by default, a cloud model (Claude) as an explicit opt-in. The note-generation
 logic lives in `note_core` (parallels `stt_core`) and is driven by the same
 API/web surface. A transcript can come from a fresh upload or be **reused** from
 an existing CLI transcript in `out/`; completed notes are **persisted** to a
-project-local SQLite DB and browsable as history.
-*(→ ADR-0009, ADR-0010, ADR-0003, ADR-0008)*
+project-local SQLite DB and browsable as history. The provider is **selectable**
+from the UI when more than one is enabled, extra providers plug in via an
+optional git-ignored module, and both transcription and note runs are **timed**,
+**listed as in-progress sessions**, **refresh-safe**, and **retryable**.
+*(→ ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0003, ADR-0008)*
 
 - **REQ-100** (Event) — WHEN the user requests a note for a completed transcript
   with a chosen template (`soap`, `hp`, or a pasted `free` sample format), THE
@@ -204,6 +207,85 @@ project-local SQLite DB and browsable as history.
   `STT_DB_PATH`); it contains PHI and SHALL NOT be committed, and its location
   inside the project preserves the one-command `rm -rf` cleanup.
   *(→ ADR-0010, ADR-0003)*
+
+### Selectable provider + generic plugin seam
+
+- **REQ-111** (Optional) — WHERE more than one note provider is enabled, THE
+  SYSTEM SHALL let the user pick the **provider** and its **model** from the web
+  UI (a "Sağlayıcı" + "Model" selector), SHALL hide that selector when only one
+  provider is enabled, and SHALL drive the off-device PHI warning from the chosen
+  provider's `off_device` flag. THE SYSTEM SHALL expose the enabled providers
+  (`GET /notes/providers` → `{providers:[{key, label, models, default_model,
+  off_device}], default_provider}`) and, on `POST /notes`, SHALL validate the
+  requested provider against that enabled set and fill an unspecified model from
+  the descriptor's `default_model`. *(→ ADR-0011, ADR-0009)*
+- **REQ-112** (Ubiquitous) — THE SYSTEM SHALL gate the set of offered providers
+  by the operator allowlist `STT_NOTE_PROVIDERS` (a comma list, **default
+  `ollama`**), so the committed/default configuration exposes only the local
+  provider and any off-device or plugin provider must be turned on deliberately
+  (typically via the git-ignored `env.local.sh`). *(→ ADR-0011, ADR-0009,
+  ADR-0003)*
+- **REQ-113** (Optional) — WHERE an optional, **git-ignored** local provider
+  module (`note_core._local_providers`) is present, THE SYSTEM SHALL merge its
+  providers into `get_provider()` / `list_providers()`, SHALL filter each by the
+  allowlist and by its own `available()` predicate (so a provider that cannot run
+  on this machine never appears), and SHALL consult it last. IF the module is
+  absent or broken, THEN THE SYSTEM SHALL fall back to the built-in providers
+  without error. THE SYSTEM SHALL keep such machine-specific integrations (e.g. an
+  Opus-via-`claude`-CLI provider) **out of version control**. *(→ ADR-0011,
+  ADR-0003)*
+
+### Note output shape & concision
+
+- **REQ-114** (Ubiquitous) — THE SYSTEM SHALL make the user's **chosen template
+  the whole note** (its own headings/order), append exactly **one** "Klinik
+  İnceleme Gerekli" section at the end, and SHALL NOT emit the earlier mandatory
+  A–E scaffold that duplicated content across sections. THE SYSTEM SHALL start
+  directly with the note — no title banner, cover, blockquote warning, or preamble
+  ("İşte not:") — SHALL NOT repeat the same fact in multiple places, and SHALL add
+  a pedigree ("Soyağacı") block **only** when the family history is rich (multiple
+  relatives). This applies to **every** provider. *(refines REQ-104, REQ-106;
+  → ADR-0009)*
+
+### Timing metrics
+
+- **REQ-115** (Ubiquitous) — THE SYSTEM SHALL measure the wall-clock duration of
+  transcription (`TranscribeResult.transcribe_seconds`, persisted into
+  `out/<stem>.json`) and of note generation (`note_seconds`), SHALL persist both
+  onto a saved note (SQLite `transcribe_seconds` + `note_seconds` columns, added
+  by an `ALTER TABLE` migration on pre-existing DBs), and SHALL surface them on the
+  relevant API responses (`GET /jobs/{id}`, `GET /notes/{id}`, `GET /transcripts`,
+  the `GET /notes` list) with `POST /notes` accepting a carried
+  `transcribe_seconds`. THE web UI SHALL show "Deşifre: Xs" / "Not: Ys" chips and a
+  model chip. *(→ ADR-0009, ADR-0010)*
+- **REQ-116** (State) — WHILE a transcription or note is running, THE SYSTEM SHALL
+  show a **live elapsed timer** anchored to the process's real start time
+  (`started_at`, epoch seconds set on the server at run start and returned by the
+  status endpoints) so a page refresh mid-run shows the true elapsed time instead
+  of resetting to zero. *(→ ADR-0012, ADR-0008)*
+
+### In-progress sessions, persistence & retry
+
+- **REQ-117** (Event) — WHEN transcriptions or notes are queued, running, or
+  failed, THE SYSTEM SHALL list them as active sessions for the sidebar
+  (`GET /jobs` for transcriptions, `GET /notes/active` for notes; newest first,
+  `done` excluded), and the web "Oturumlar" sidebar SHALL show active items on top
+  (spinner + Turkish stage label, or a ⚠ + "Tekrar dene" affordance on failure),
+  then a divider, then the saved notes, polling the active lists every ~3s.
+  *(→ ADR-0012, ADR-0010)*
+- **REQ-118** (Event) — WHEN the page is refreshed mid-run, THE SYSTEM SHALL
+  restore the current screen from a client-side pointer (`localStorage`, via
+  `utils/session.ts`) and re-attach to the backend by id (re-open the SSE stream or
+  re-fetch the result), so an in-progress job survives the refresh and is
+  returnable from the sidebar. This persistence is scoped to the **life of the
+  server process** — the in-memory job registries are not durable, so a server
+  restart (e.g. `make api`) drops in-flight jobs. *(→ ADR-0012, ADR-0008)*
+- **REQ-119** (Event) — WHEN the user retries a **failed transcription**
+  (`POST /jobs/{id}/retry`), THE SYSTEM SHALL re-run it using the **same uploaded
+  file still on disk** (no re-upload); IF that file is gone, THEN THE SYSTEM SHALL
+  return 404. WHEN the user retries a **failed note** (`POST /notes/{id}/retry`),
+  THE SYSTEM SHALL re-run it with the same transcript + options (no data re-entry).
+  *(→ ADR-0012, ADR-0008)*
 
 ---
 

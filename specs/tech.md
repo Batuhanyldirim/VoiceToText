@@ -61,17 +61,63 @@ Rationale (in-process jobs + SSE, no Celery/Redis/WebSocket) →
 Import-not-subprocess (API imports `stt_core` directly) →
 [`adr/0007-shared-core-import-not-subprocess.md`](adr/0007-shared-core-import-not-subprocess.md).
 
+The API logging config surfaces our job/note lifecycle `INFO` lines and quiets a
+known set of benign third-party warnings (torch `weights_only`, `TRANSFORMERS_CACHE`
+deprecation, pyannote/torch version mismatch, and noisy loggers) that otherwise
+fire on every job. `STT_LOG_LEVEL=DEBUG` shows everything; `STT_QUIET_DEPS=0` keeps
+the third-party noise. (The same pyannote/torch version-warning noise is muted in
+`stt_core`.)
+
 ## Clinical note stack (`packages/note-core`)
 
 A pure package that parallels `stt_core`: `generate(transcript, opts, progress)
 -> NoteResult`, streaming token deltas through a callback. The AI backend is
-**pluggable** with two providers. → [`adr/0009-clinical-note-pluggable-provider.md`](adr/0009-clinical-note-pluggable-provider.md)
+**pluggable** behind a small provider protocol (`stream(system, user, opts,
+result)`). → [`adr/0009-clinical-note-pluggable-provider.md`](adr/0009-clinical-note-pluggable-provider.md)
+(plus the plugin-seam decision, planned as ADR-0011)
 
 | Layer | Component | Notes |
 |---|---|---|
 | Local provider (**default**) | [Ollama](https://ollama.com) via `POST http://localhost:11434/api/chat` (plain HTTP, streamed) | fully offline; transcript never leaves the Mac. Default model **`qwen2.5:32b-instruct`** |
 | Cloud provider (**opt-in**) | Anthropic SDK (`anthropic`), model `claude-opus-4-8` | optional extra: `uv sync --extra claude`; gated behind `STT_NOTE_PROVIDER=claude` + a server-env token |
-| Prompt/templates | `prompt.py` (verbatim clinical-documentation prompt) + `templates.py` | templates: `soap`, `hp`, plus a free-text paste |
+| Local-only plugin (**machine-specific**) | `ClaudeCliProvider` (Opus 4.8 via the authenticated `claude` CLI) | GIT-IGNORED `_local_providers.py`; enabled via `STT_NOTE_PROVIDERS`; self-hides unless `claude` is on PATH — see the plugin seam below |
+| Prompt/templates | `prompt.py` (verbatim **Turkish** clinical-documentation prompt) + `templates.py` | templates: `soap`, `hp`, plus a free-text paste — all Turkish |
+
+### Provider plugin seam (`STT_NOTE_PROVIDERS`)
+
+The committed repo offers exactly one provider — local Ollama — but note
+generation is pluggable so a deployment can add extra providers **without
+touching committed code**. → planned ADR-0011 (note-provider plugin seam)
+
+- `providers.list_providers()` returns UI descriptors (`{key, label, models,
+  default_model, off_device}`), filtered by an operator **allowlist** and each
+  provider's own availability. `_provider_allowlist()` reads `STT_NOTE_PROVIDERS`
+  (comma list, **default `ollama`**), so a non-default/off-device provider must be
+  turned on deliberately. `get_provider()` resolves the built-ins first and the
+  local plugin **last**.
+- `_local_registry()` optionally imports a `_local_providers` module sitting next
+  to `providers.py` and merges its `PROVIDERS` (factories) + `DESCRIPTORS`. A
+  missing or broken plugin never breaks the app (the loader swallows import
+  errors). Each descriptor carries an `available()` predicate so a provider that
+  can't run on this machine never appears in the list.
+- The API surfaces this at `GET /notes/providers` (`{providers, default_provider}`);
+  `POST /notes` validates the requested `provider` against `list_providers()` and
+  fills `model` from the descriptor's `default_model`. The web NoteGenerator shows
+  a **"Sağlayıcı"** (+ "Model") selector, hidden when only one provider exists;
+  `off_device` drives the PHI warning.
+
+**The optional Claude-CLI local provider.** This machine ships a git-ignored
+`_local_providers.py` whose `ClaudeCliProvider` runs **Opus 4.8** by shelling out
+to the locally-authenticated `claude` CLI. It exists because this box runs Claude
+Code on **Amazon Bedrock** — there is no `ANTHROPIC_API_KEY`, so the first-party
+Anthropic SDK path (`ClaudeProvider`) can't authenticate, but the CLI carries its
+own credentials. It streams `--output-format stream-json --include-partial-messages`
+token deltas, runs in a neutral temp cwd with tools disallowed (so it doesn't
+inherit this repo's context), and self-hides unless `claude` is on PATH. It is
+`off_device` (transcript goes to the model via Bedrock), so the UI shows the PHI
+warning. **None of this is committed** — `_local_providers.py`, `env.local.sh`,
+and `README.local.md` are all git-ignored, keeping machine-specific integrations
+out of version control and the default repo local-only.
 
 **Default local model — `qwen2.5:32b-instruct`** (~20 GB, Q4): the strongest
 practical model on a 48 GB M4 Pro — it fits unified memory alongside a large
@@ -89,7 +135,59 @@ regardless of `OLLAMA_MODELS` — negligible, and not a model download; the clea
 promise is about the multi-GB blobs, which do go into the project.
 
 Provider/model defaults are read from env (`STT_NOTE_PROVIDER` default `ollama`,
-`STT_NOTE_MODEL` default `qwen2.5:32b-instruct`), set by `env.sh`.
+`STT_NOTE_MODEL` default `qwen2.5:32b-instruct`), set by `env.sh`. The set of
+providers the UI may offer is a separate knob — `STT_NOTE_PROVIDERS` (comma list,
+default `ollama`) — read by `list_providers()` (see the plugin seam above). `env.sh`
+sources an optional git-ignored `env.local.sh` **last**, which is where a machine
+sets `STT_NOTE_PROVIDERS` (e.g. `ollama,claude-cli`) and any local-only vars — so
+the committed default config exposes only the local model.
+
+### Timing metrics
+
+Both stages report wall-clock durations, surfaced end-to-end:
+
+- `stt_core` records `TranscribeResult.transcribe_seconds`; the API worker sets it
+  before writing files, and `emit.write_json` persists it into `out/<stem>.json`
+  (so it survives transcript reuse). `NoteJob` records `note_seconds`.
+- `Job`/`NoteJob` carry `created_at` (ISO-8601, at registration) + `started_at`
+  (epoch seconds, at `_run` start). `SavedNote`/the SQLite store gain
+  `transcribe_seconds` + `note_seconds` columns (added to a pre-existing DB by an
+  in-place `ALTER TABLE` migration).
+- The API returns these on `GET /jobs/{id}`, `GET /notes/{id}`, `GET /transcripts[...]`,
+  and the `/notes` list; `POST /notes` accepts `transcribe_seconds` (carried from
+  the chosen transcript). The web shows **"Deşifre: Xs" / "Not: Ys"** chips, a model
+  chip, and a **live elapsed timer** (`useElapsed` hook) anchored to the server's
+  `started_at` so it shows true elapsed time after a page refresh.
+
+### Sessions / persistence model (and its scope)
+
+Job state is **in-memory**, living with the server process (`JobManager` /
+`NoteJobManager` registries + a single worker thread each — no broker; ADR-0007/0008).
+On top of that:
+
+- `list_active()` exposes queued/running/failed jobs for the sidebar; `retry()`
+  re-runs a failed transcription (from the SAME uploaded file still on disk) or
+  note (same transcript + options) — surfaced at `GET /jobs`, `GET /notes/active`,
+  `POST /jobs\|notes/{id}/retry`.
+- The web `NotesSidebar` ("Oturumlar") polls the active lists every 3s; `utils/session.ts`
+  persists the current screen to `localStorage` and `App.tsx` rehydrates on load
+  (re-attaches SSE / re-fetches the finished result), so an in-progress job is
+  returnable after a page refresh.
+- **Scope caveat:** this durability is client-side re-attachment to a *still-running*
+  server. The job registry itself is not persisted — a **`make api` restart drops
+  all in-flight jobs** (only completed notes survive, in the SQLite store). Durable
+  history is limited to finished notes.
+
+**`make api` vs `make api-dev` (env-sourcing + no-reload).** `make api` runs the
+server with **no `--reload`** on purpose: a reload restarts the process and orphans
+any in-flight job — its SSE stream dies with no `done` event ("stuck at done") and
+the in-memory registry is wiped. `make api-dev` enables reload but **scopes it to
+the source dirs only** (`apps/api/src` + `packages`) — never `.venv`, `models/`, or
+`jobs/` — so a model load or job-output write doesn't trigger a restart. Both
+recipes `source env.sh` inside the recipe (a single `&&` chain, since each make
+line is its own shell) so the server always has `HF_TOKEN`, the in-project cache
+redirects, and `STT_NOTE_PROVIDERS` (without which the provider selector would
+silently disappear).
 
 ## Frontend stack (`apps/web`)
 
@@ -126,6 +224,9 @@ Separate `package.json` / `npm install` / `npm run dev` — it does **not** use
 - The cloud note token (`STT_CLAUDE_API_KEY` or `ANTHROPIC_API_KEY`) is read
   **only** from server env, used only when `STT_NOTE_PROVIDER=claude`, and is
   never accepted from the browser, logged, or returned. → ADR-0009.
+- The local Claude-CLI provider holds **no token in this repo**: it relies on the
+  `claude` CLI's own ambient (Bedrock) credentials. Provider error messages never
+  contain a secret. Machine-specific enablement (`env.local.sh`) is git-ignored.
 
 ## First-run footprint
 
