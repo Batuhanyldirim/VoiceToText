@@ -138,3 +138,26 @@ def test_assign_unknown_patient_400(client):
 
 def test_get_unknown_patient_404(client):
     assert client.get("/patients/nope").status_code == 404
+
+
+# --- search (ADR-0018) ------------------------------------------------------
+
+def test_search_endpoint(client):
+    _seed_note(client, "n1", note="hasta öksürüyor", title="Öksürük")
+    _seed_note(client, "n2", note="tansiyon", title="Kontrol")
+    # body/title substring, case-insensitive
+    r = client.get("/notes", params={"q": "öksür"}).json()["notes"]
+    assert [n["id"] for n in r] == ["n1"]
+    r = client.get("/notes", params={"q": "KONTROL"}).json()["notes"]
+    assert [n["id"] for n in r] == ["n2"]
+    # blank q returns all
+    assert len(client.get("/notes", params={"q": ""}).json()["notes"]) == 2
+
+
+def test_search_composes_with_patient_filter_endpoint(client):
+    _seed_note(client, "n1", note="öksürük")
+    _seed_note(client, "n2", note="öksürük")
+    pid = client.post("/patients", json={"name": "Ayşe"}).json()["id"]
+    client.put("/notes/n1/patient", json={"patient_id": pid})
+    r = client.get("/notes", params={"q": "öksürük", "patient_id": pid}).json()["notes"]
+    assert [n["id"] for n in r] == ["n1"]

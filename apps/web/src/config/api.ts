@@ -247,15 +247,18 @@ export async function getTranscript(
   return asJson<TranscriptText>(res);
 }
 
-/** List saved notes (history), newest first. Optionally filter by patient. */
+/** List saved notes (history), newest first. Optionally filter by patient and/or
+ *  a search query (matched against title / patient / body). */
 export async function listNotes(
   signal?: AbortSignal,
   patientId?: string,
+  q?: string,
 ): Promise<SavedNoteSummary[]> {
-  const url = patientId
-    ? `${API}/notes?patient_id=${encodeURIComponent(patientId)}`
-    : `${API}/notes`;
-  const res = await fetch(url, { signal });
+  const params = new URLSearchParams();
+  if (patientId) params.set("patient_id", patientId);
+  if (q && q.trim()) params.set("q", q.trim());
+  const qs = params.toString();
+  const res = await fetch(`${API}/notes${qs ? `?${qs}` : ""}`, { signal });
   const body = await asJson<{ notes: SavedNoteSummary[] }>(res);
   return body.notes ?? [];
 }

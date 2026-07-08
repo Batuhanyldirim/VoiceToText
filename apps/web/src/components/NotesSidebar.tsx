@@ -8,9 +8,11 @@ import {
   Divider,
   FormControl,
   IconButton,
+  InputAdornment,
   MenuItem,
   Select,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -23,6 +25,8 @@ import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
+import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
 import type { ActiveJob, ActiveNote, Patient, SavedNoteSummary } from "../types";
 import {
   deleteNote,
@@ -94,16 +98,19 @@ export default function NotesSidebar({
   const [patients, setPatients] = useState<Patient[]>([]);
   // "" = all patients; otherwise a patient id to filter the saved-note list by.
   const [patientFilter, setPatientFilter] = useState<string>("");
+  // Search query (title / patient / body). Debounced into `searchQuery` below.
+  const [searchInput, setSearchInput] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
 
   const refresh = useCallback(
-    async (signal?: AbortSignal, filter?: string) => {
+    async (signal?: AbortSignal, filter?: string, query?: string) => {
       try {
         const [s, j, n, ps] = await Promise.all([
-          listNotes(signal, filter || undefined),
+          listNotes(signal, filter || undefined, query || undefined),
           listActiveJobs(signal),
           listActiveNotes(signal),
           listPatients(signal),
@@ -125,20 +132,26 @@ export default function NotesSidebar({
     [],
   );
 
-  // Initial load + reload on refreshToken or patient-filter change.
+  // Debounce the search box (300ms) so we don't re-query on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setSearchQuery(searchInput), 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
+  // Initial load + reload on refreshToken / patient-filter / search change.
   useEffect(() => {
     const abort = new AbortController();
-    void refresh(abort.signal, patientFilter);
+    void refresh(abort.signal, patientFilter, searchQuery);
     return () => abort.abort();
-  }, [refresh, refreshToken, patientFilter]);
+  }, [refresh, refreshToken, patientFilter, searchQuery]);
 
   // Poll while there is active work so rows progress and drop off when done.
   const hasActive = activeJobs.length > 0 || activeNotes.length > 0;
   useEffect(() => {
     if (!hasActive) return;
-    const id = setInterval(() => void refresh(undefined, patientFilter), POLL_MS);
+    const id = setInterval(() => void refresh(undefined, patientFilter, searchQuery), POLL_MS);
     return () => clearInterval(id);
-  }, [hasActive, refresh, patientFilter]);
+  }, [hasActive, refresh, patientFilter, searchQuery]);
 
   const handleDelete = useCallback(
     async (e: React.MouseEvent, id: string) => {
@@ -183,8 +196,12 @@ export default function NotesSidebar({
     [refresh, onOpenJob, onOpenActiveNote],
   );
 
+  const filterActive = Boolean(searchQuery.trim() || patientFilter);
   const nothing =
-    !loading && !loadError && saved.length === 0 && !hasActive;
+    !loading && !loadError && saved.length === 0 && !hasActive && !filterActive;
+  // A search/patient filter is active but matched no saved notes.
+  const noResults =
+    !loading && !loadError && saved.length === 0 && filterActive;
 
   return (
     <Box
@@ -216,6 +233,37 @@ export default function NotesSidebar({
         <Button fullWidth variant="outlined" startIcon={<AddRoundedIcon />} onClick={onNewNote}>
           Yeni not
         </Button>
+      </Box>
+
+      {/* Search (ADR-0018) — title / patient / body, composes with the filter. */}
+      <Box sx={{ px: 2, pb: 1.5 }}>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Notlarda ara…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchRoundedIcon fontSize="small" />
+                </InputAdornment>
+              ),
+              endAdornment: searchInput ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    aria-label="Aramayı temizle"
+                    onClick={() => setSearchInput("")}
+                  >
+                    <ClearRoundedIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            },
+          }}
+        />
       </Box>
 
       {/* Patient filter (ADR-0016) — only shown once patients exist. */}
@@ -261,6 +309,14 @@ export default function NotesSidebar({
             sx={{ px: 2, py: 4, textAlign: "center" }}
           >
             Henüz bir şey yok. Başlamak için “Yeni not”.
+          </Typography>
+        ) : noResults ? (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ px: 2, py: 4, textAlign: "center" }}
+          >
+            Eşleşen not bulunamadı.
           </Typography>
         ) : (
           <Stack spacing={0.5}>

@@ -123,6 +123,50 @@ def test_assign_missing_note_returns_none(store):
     assert store.set_note_patient("nope", p.id) is None
 
 
+# --- search (ADR-0018) ------------------------------------------------------
+
+def test_search_matches_title_patient_and_body(store):
+    make_saved_note(store, "n1", title="Öksürük muayenesi", note="hasta öksürüyor")
+    make_saved_note(store, "n2", title="Kontrol", note="tansiyon normal")
+    make_saved_note(store, "n3", title="Diğer", note="baş ağrısı şikayeti")
+    p = store.create_patient("Ahmet Yılmaz")
+    store.set_note_patient("n2", p.id)
+
+    # body match
+    assert {r["id"] for r in store.list(q="öksür")} == {"n1"}
+    # title match (case-insensitive)
+    assert {r["id"] for r in store.list(q="KONTROL")} == {"n2"}
+    # patient-name match
+    assert {r["id"] for r in store.list(q="yılmaz")} == {"n2"}
+    # no match
+    assert store.list(q="zzz-nope") == []
+
+
+def test_search_uses_effective_body(store):
+    make_saved_note(store, "n1", note="AI original text")
+    # the edit introduces a new word; search should hit the EFFECTIVE body
+    store.update_body("n1", "clinician replaced with pnömoni")
+    assert {r["id"] for r in store.list(q="pnömoni")} == {"n1"}
+    # the old AI-only word no longer matches the effective body
+    assert store.list(q="original") == []
+
+
+def test_search_composes_with_patient_filter(store):
+    make_saved_note(store, "n1", note="öksürük")
+    make_saved_note(store, "n2", note="öksürük")
+    p = store.create_patient("Ayşe")
+    store.set_note_patient("n1", p.id)
+    # both notes match the query, but only n1 is the patient's
+    assert {r["id"] for r in store.list(patient_id=p.id, q="öksürük")} == {"n1"}
+
+
+def test_search_blank_returns_all(store):
+    make_saved_note(store, "n1")
+    make_saved_note(store, "n2")
+    assert len(store.list(q="")) == 2
+    assert len(store.list(q="   ")) == 2
+
+
 # --- migration safety (ADR-0010/0015/0016) ---------------------------------
 
 def test_migration_adds_columns_without_data_loss(tmp_path):

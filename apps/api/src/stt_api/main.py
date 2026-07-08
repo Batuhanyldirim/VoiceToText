@@ -459,11 +459,12 @@ class NoteRequest(BaseModel):
 
 
 @app.get("/notes")
-def list_notes(patient_id: Optional[str] = None) -> dict:
+def list_notes(patient_id: Optional[str] = None, q: Optional[str] = None) -> dict:
     """Durable note history (summary rows, newest first). Distinct route from the
     static /notes/templates and the parameterized /notes/{id}. Optional
-    ?patient_id=… filters to one patient (ADR-0016)."""
-    return {"notes": note_store.list(patient_id=patient_id)}
+    ?patient_id=… filters to one patient (ADR-0016); ?q=… case-insensitively
+    searches title/patient/body (ADR-0018); both compose."""
+    return {"notes": note_store.list(patient_id=patient_id, q=q)}
 
 
 @app.get("/notes/active")

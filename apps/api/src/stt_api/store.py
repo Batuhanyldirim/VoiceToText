@@ -183,19 +183,32 @@ class NoteStore:
                  note.edited_note, note.status, note.finalized_at, note.patient_id),
             )
 
-    def list(self, patient_id: Optional[str] = None) -> list[dict]:
+    def list(self, patient_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
         """Newest first, summary shape (no bodies). Optionally filter to one
-        patient. Each row carries patient_id + patient_name (via a LEFT JOIN)."""
+        patient and/or a case-insensitive search query `q` matched against the
+        title, patient name, or EFFECTIVE note body (edit if any, else AI —
+        ADR-0018). Each row carries patient_id + patient_name (via a LEFT JOIN)."""
         sql = (
             "SELECT n.id, n.created_at, n.title, n.source_name, n.provider, n.model, "
             "n.template, n.transcribe_seconds, n.note_seconds, n.edited_note, "
             "n.status, n.finalized_at, n.patient_id, p.name AS patient_name "
             "FROM notes n LEFT JOIN patients p ON p.id = n.patient_id "
         )
-        params: tuple = ()
+        clauses: list = []
+        params: list = []
         if patient_id is not None:
-            sql += "WHERE n.patient_id = ? "
-            params = (patient_id,)
+            clauses.append("n.patient_id = ?")
+            params.append(patient_id)
+        q = (q or "").strip()
+        if q:
+            like = f"%{q.lower()}%"
+            clauses.append(
+                "(lower(n.title) LIKE ? OR lower(COALESCE(p.name,'')) LIKE ? "
+                "OR lower(COALESCE(n.edited_note, n.note)) LIKE ?)"
+            )
+            params.extend([like, like, like])
+        if clauses:
+            sql += "WHERE " + " AND ".join(clauses) + " "
         sql += "ORDER BY n.created_at DESC"
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()

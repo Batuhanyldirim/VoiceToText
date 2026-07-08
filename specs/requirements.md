@@ -427,6 +427,15 @@ list keeps working while patient grouping layers on top. *(→ ADR-0016, ADR-001
   pre-existing DB without data loss (existing notes remain unassigned). *(→
   ADR-0016, ADR-0010)*
 
+## Search & filter (Tier 1)
+
+- **REQ-141** (Event) — WHEN the user provides a search query, THE SYSTEM SHALL
+  filter the saved-note list to notes whose **title, patient name, or note body**
+  contains the query (case-insensitive substring), accept it on `GET /notes?q=…`,
+  and combine it with the existing `patient_id` filter (both applied together).
+  The web sidebar SHALL provide a **search box** ("Notlarda ara…") that narrows
+  the list as the user types. *(→ ADR-0018, ADR-0016)*
+
 ---
 
 ## Verification gate
