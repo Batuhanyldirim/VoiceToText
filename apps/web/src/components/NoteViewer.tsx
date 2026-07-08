@@ -19,8 +19,11 @@ import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import TimerOutlinedIcon from "@mui/icons-material/TimerOutlined";
+import MemoryRoundedIcon from "@mui/icons-material/MemoryRounded";
 import type { Note, NoteSSEPayload, NoteStage } from "../types";
 import { ApiError, getNote, noteEventsUrl } from "../config/api";
+import { useElapsed } from "../hooks/useElapsed";
+import { formatSeconds } from "../utils/format";
 
 // A vanished note job (server restarted mid-run) surfaces as a 404 — terminal.
 const GONE_MESSAGE =
@@ -85,6 +88,9 @@ export default function NoteViewer({
   // Timing metrics from the finished note (transcription + note generation).
   const [noteSeconds, setNoteSeconds] = useState<number | null>(null);
   const [transcribeSeconds, setTranscribeSeconds] = useState<number | null>(null);
+  // Which model produced the note (shown as a chip). Available as soon as the
+  // job is known — captured from the first fetch and the terminal fetch.
+  const [model, setModel] = useState<string | null>(null);
 
   const finishedRef = useRef(false);
   // Keep the latest onSaved in a ref so the effect deps stay [noteId, live].
@@ -98,6 +104,14 @@ export default function NoteViewer({
     let abort: AbortController | null = null;
     let cancelled = false;
 
+    // Learn the model up front so it's shown during generation too (not just
+    // at the end). Best-effort — the terminal fetch confirms it either way.
+    void getNote(noteId)
+      .then((j) => {
+        if (!cancelled && j.model) setModel(j.model);
+      })
+      .catch(() => {});
+
     function finish(job: Note) {
       if (finishedRef.current || cancelled) return;
       finishedRef.current = true;
@@ -106,6 +120,7 @@ export default function NoteViewer({
       if (typeof job.note_seconds === "number") setNoteSeconds(job.note_seconds);
       if (typeof job.transcribe_seconds === "number")
         setTranscribeSeconds(job.transcribe_seconds);
+      if (job.model) setModel(job.model);
       setStatus("done");
       // A freshly-generated (live) note has just been persisted — tell the app
       // so the sidebar list picks it up. (Harmless when re-opening a saved note.)
@@ -255,6 +270,9 @@ export default function NoteViewer({
   const isError = status === "error" || error !== null;
   const isDone = status === "done";
   const isGenerating = !isError && !isDone;
+  // Live elapsed while the note streams; the backend's note_seconds is shown
+  // once done (this timer freezes when isGenerating flips false).
+  const elapsed = useElapsed(isGenerating);
 
   const handleCopy = async () => {
     try {
@@ -301,13 +319,26 @@ export default function NoteViewer({
               Klinik not
             </Typography>
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+              {model && (
+                <Chip
+                  icon={<MemoryRoundedIcon />}
+                  label={modelLabel(model)}
+                  size="small"
+                  variant="outlined"
+                  color="secondary"
+                />
+              )}
               {isGenerating && (
                 <Chip
                   icon={<CircularProgress size={14} thickness={6} />}
-                  label={transport === "polling" ? "Oluşturuluyor (yoklama)" : "Oluşturuluyor…"}
+                  label={
+                    `${transport === "polling" ? "Oluşturuluyor (yoklama)" : "Oluşturuluyor"}` +
+                    ` · ${formatSeconds(elapsed)}`
+                  }
                   size="small"
                   color="primary"
                   variant="outlined"
+                  sx={{ fontVariantNumeric: "tabular-nums" }}
                 />
               )}
               {isDone && <Chip label="Tamamlandı" size="small" color="success" />}
@@ -451,6 +482,15 @@ export default function NoteViewer({
   );
 }
 
+/** Friendly display name for a model id (falls back to the raw id). */
+function modelLabel(model: string): string {
+  const m = model.toLowerCase();
+  if (m.includes("opus-4-8")) return "Opus 4.8";
+  if (m.includes("qwen2.5:32b")) return "Qwen2.5 32B (yerel)";
+  if (m.startsWith("claude")) return model.replace(/^claude-/, "Claude ");
+  return model;
+}
+
 /** Best-effort JSON parse of an SSE data payload. */
 function parse(raw: string): NoteSSEPayload | null {
   try {
@@ -458,13 +498,4 @@ function parse(raw: string): NoteSSEPayload | null {
   } catch {
     return null;
   }
-}
-
-/** Human-friendly duration: "42 sn" under a minute, "2 dk 18 sn" above. */
-function formatSeconds(s: number): string {
-  const total = Math.round(s);
-  if (total < 60) return `${total} sn`;
-  const m = Math.floor(total / 60);
-  const rem = total % 60;
-  return rem ? `${m} dk ${rem} sn` : `${m} dk`;
 }

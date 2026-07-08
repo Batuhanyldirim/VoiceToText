@@ -12,8 +12,11 @@ import {
   Typography,
 } from "@mui/material";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
+import TimerOutlinedIcon from "@mui/icons-material/TimerOutlined";
 import type { JobResult, SSEPayload, Stage } from "../types";
 import { ApiError, getJob, jobEventsUrl } from "../config/api";
+import { useElapsed } from "../hooks/useElapsed";
+import { formatSeconds } from "../utils/format";
 
 // A vanished job (server restarted mid-run → in-memory registry wiped) surfaces
 // as a 404. Treat that as terminal so the client shows a clear error instead of
@@ -217,13 +220,42 @@ export default function ProgressScreen({
   const activeStep = useMemo(() => stageToStepIndex(stage), [stage]);
   const isError = stage === "error" || error !== null;
   const showDeterminate = stage === "transcribe" && typeof percent === "number";
+  // Live elapsed time while transcription runs (freezes on error; the flow
+  // navigates away on success, so there's no lingering "done" state here).
+  const elapsed = useElapsed(!isError);
 
   return (
     <Card>
       <CardContent sx={{ p: { xs: 2.5, sm: 4 } }}>
-        <Typography variant="h5" gutterBottom>
-          {isError ? "Bir sorun oluştu" : "Deşifre ediliyor…"}
-        </Typography>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 2,
+          }}
+        >
+          <Typography variant="h5" gutterBottom>
+            {isError ? "Bir sorun oluştu" : "Deşifre ediliyor…"}
+          </Typography>
+          {!isError && (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                color: "primary.main",
+                fontVariantNumeric: "tabular-nums",
+                flexShrink: 0,
+              }}
+            >
+              <TimerOutlinedIcon fontSize="small" />
+              <Typography variant="h6" sx={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                {formatSeconds(elapsed)}
+              </Typography>
+            </Box>
+          )}
+        </Box>
         {fileName && (
           <Typography variant="body2" color="text.secondary" gutterBottom>
             {fileName}

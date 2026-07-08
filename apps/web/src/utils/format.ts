@@ -12,6 +12,17 @@ export function formatTimestamp(seconds: number): string {
   return `${pad(m)}:${pad(s)}`;
 }
 
+/** Human-friendly duration in Turkish: "42 sn" under a minute, "2 dk 18 sn"
+ *  above. Shared by the live process timers and the saved-note timing chips. */
+export function formatSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} sn`;
+  const m = Math.floor(total / 60);
+  const rem = total % 60;
+  return rem ? `${m} dk ${rem} sn` : `${m} dk`;
+}
+
 // A distinct, pleasant palette. Speakers map into this deterministically so a
 // given speaker string always gets the same color across renders.
 const SPEAKER_PALETTE = [

@@ -15,6 +15,7 @@ import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import type { SavedNoteSummary } from "../types";
 import { deleteNote, listNotes } from "../config/api";
+import { formatSeconds } from "../utils/format";
 
 export const SIDEBAR_WIDTH = 288;
 
@@ -42,14 +43,6 @@ function formatDate(value: string): string {
   });
 }
 
-/** Compact duration: "42 sn" / "2 dk 18 sn". */
-function formatSeconds(s: number): string {
-  const total = Math.round(s);
-  if (total < 60) return `${total} sn`;
-  const m = Math.floor(total / 60);
-  const rem = total % 60;
-  return rem ? `${m} dk ${rem} sn` : `${m} dk`;
-}
 
 export default function NotesSidebar({
   activeNoteId,
