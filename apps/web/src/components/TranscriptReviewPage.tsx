@@ -511,10 +511,28 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
   const [draft, setDraft] = useState(turn.text);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const flagged = flags.length > 0;
   const openFlagged = flags.some((tf) => !tf.flag.resolved);
   const color = speakerColor(turn.speaker || "");
+
+  // While editing (a plain textarea can't render highlights), let the doctor click
+  // a flagged phrase to SELECT it in the field — cursor jumps there, text is
+  // selected and scrolled into view, so they can fix it without hunting.
+  const selectPhrase = (quote: string) => {
+    const el = inputRef.current;
+    if (!el) return;
+    const r = findQuoteRange(draft, quote);
+    el.focus();
+    if (r) {
+      el.setSelectionRange(r[0], r[1]);
+      // Nudge the textarea to scroll the selection into view.
+      const before = draft.slice(0, r[0]);
+      const approxLine = before.split("\n").length;
+      el.scrollTop = Math.max(0, (approxLine - 3) * 20);
+    }
+  };
 
   const save = async () => {
     if (draft.trim() === turn.text.trim()) {
@@ -601,6 +619,36 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
         {editing ? (
           <Stack spacing={1}>
+            {flagged && (
+              <Box
+                sx={{
+                  p: 1,
+                  borderRadius: 1,
+                  bgcolor: "rgba(255,167,38,0.10)",
+                  border: "1px solid",
+                  borderColor: "warning.light",
+                }}
+              >
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                  İşaretli ifadeler — düzeltmek istediğinize dokunun (metinde seçilir):
+                </Typography>
+                <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", gap: 0.5 }}>
+                  {flags.map(({ flag: f }, k) => (
+                    <Tooltip key={k} title={f.reason || "İncele"}>
+                      <Chip
+                        size="small"
+                        icon={<WarningAmberRoundedIcon />}
+                        color="warning"
+                        variant={f.resolved ? "outlined" : "filled"}
+                        label={`"${f.quote}"`}
+                        onClick={() => selectPhrase(f.quote)}
+                        sx={{ maxWidth: "100%", cursor: "pointer" }}
+                      />
+                    </Tooltip>
+                  ))}
+                </Stack>
+              </Box>
+            )}
             <TextField
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -609,6 +657,7 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
               size="small"
               autoFocus
               disabled={saving}
+              inputRef={inputRef}
             />
             {err && <Alert severity="error">{err}</Alert>}
             <Stack direction="row" spacing={1}>
