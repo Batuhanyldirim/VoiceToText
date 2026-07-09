@@ -75,6 +75,21 @@ def test_correct_turn_missing_note_returns_none(store):
     assert store.update_transcript_turn("nope", 0, "x") is None
 
 
+def test_segments_json_round_trip(store):
+    # Word-timestamped segments persist + parse back for word-precise seek (ADR-0030).
+    segs = [{"start": 1.0, "end": 2.0, "text": "Hanifi",
+             "words": [{"word": "Hanifi", "start": 1.0, "end": 1.7}]}]
+    make_saved_note(store, segments_json=json.dumps(segs, ensure_ascii=False))
+    n = store.get("n1")
+    assert n.segments[0]["words"][0]["start"] == 1.0
+    assert n.segments[0]["words"][0]["word"] == "Hanifi"
+
+
+def test_segments_default_empty(store):
+    make_saved_note(store)
+    assert store.get("n1").segments == []
+
+
 def test_set_transcript_turns_bulk_replace(store):
     # Used by the LLM re-label (ADR-0030): replace all turns, note body untouched.
     make_saved_note(store, note="AI NOTE",

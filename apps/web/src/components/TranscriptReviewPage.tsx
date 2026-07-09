@@ -23,7 +23,7 @@ import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
-import type { Note, ReviewFlag, Turn } from "../types";
+import type { Note, ReviewFlag, Segment, Turn } from "../types";
 import { correctTurn, getNote, noteAudioUrl, rediarizeNote } from "../config/api";
 import { navigate } from "../utils/router";
 import { formatTimestamp, speakerColor } from "../utils/format";
@@ -88,8 +88,55 @@ export default function TranscriptReviewPage({ noteId }: Props) {
 
   const turns: Turn[] = useMemo(() => note?.turns ?? [], [note]);
   const flags: ReviewFlag[] = useMemo(() => note?.review_flags ?? [], [note]);
+  const segments: Segment[] = useMemo(() => note?.segments ?? [], [note]);
   const hasAudio = !!note?.has_audio;
   const audioUrl = hasAudio ? noteAudioUrl(noteId) : null;
+
+  // Word-timestamp index (ADR-0030): all words with their start time, in order.
+  // Powers word-precise seek — a turn only carries its whole-span start/end, which
+  // is useless when diarization merged the conversation into one long turn.
+  const allWords = useMemo(() => {
+    const out: { word: string; start: number }[] = [];
+    for (const s of segments) {
+      for (const w of s.words ?? []) {
+        if (w && typeof w.start === "number" && w.word) {
+          out.push({ word: String(w.word), start: w.start });
+        }
+      }
+    }
+    return out;
+  }, [segments]);
+
+  // For a per-turn word list: match the turn's text words to timestamped words in
+  // order (a moving pointer), so each word in the rendered turn can carry a seek
+  // time. Falls back to the turn start when a word can't be timestamped.
+  const turnWordTimes = useMemo(() => {
+    const norm = (s: string) =>
+      s.replace(/İ/g, "i").replace(/I/g, "ı").toLocaleLowerCase("tr").replace(/[^\wçğışöü]/gi, "");
+    let ptr = 0;
+    return turns.map((turn) => {
+      const words = (turn.text || "").split(/(\s+)/); // keep whitespace tokens
+      return words.map((tok) => {
+        if (/^\s+$/.test(tok) || tok === "") return { tok, start: null as number | null };
+        // advance the pointer to the next timestamped word that matches
+        const target = norm(tok);
+        let start: number | null = null;
+        for (let k = ptr; k < allWords.length && k < ptr + 6; k++) {
+          if (norm(allWords[k].word) === target) {
+            start = allWords[k].start;
+            ptr = k + 1;
+            break;
+          }
+        }
+        if (start === null && ptr < allWords.length) {
+          // best-effort: take the next word's time and advance, keeps us roughly aligned
+          start = allWords[ptr].start;
+          ptr += 1;
+        }
+        return { tok, start };
+      });
+    });
+  }, [turns, allWords]);
 
   // Map turn index → its flags, each carrying its GLOBAL index in `flags` (so the
   // turn can register that flag's <mark> ref for exact-phrase scrolling/highlight).
@@ -104,43 +151,67 @@ export default function TranscriptReviewPage({ noteId }: Props) {
   const openFlags = flags.filter((f) => !f.resolved);
   const resolvedCount = flags.length - openFlags.length;
 
+  // The one seek primitive: move the player to an absolute time + play.
+  const seekToTime = useCallback((seconds: number) => {
+    const el = audioRef.current;
+    if (!el) return;
+    el.currentTime = seconds;
+    void el.play().catch(() => {
+      /* autoplay may be blocked; controls remain */
+    });
+  }, []);
+
   const seekToTurn = useCallback(
     (idx: number) => {
       const turn = turns[idx];
-      const el = audioRef.current;
       turnRefs.current[idx]?.scrollIntoView({ behavior: "smooth", block: "center" });
       setActiveIdx(idx);
-      if (el && turn && typeof turn.start === "number") {
-        el.currentTime = turn.start;
-        void el.play().catch(() => {
-          /* autoplay may be blocked; controls remain */
-        });
-      }
+      if (turn && typeof turn.start === "number") seekToTime(turn.start);
     },
-    [turns],
+    [turns, seekToTime],
   );
 
-  // Jump to a specific FLAG: scroll to its exact highlighted phrase (falling back
-  // to the turn) + pulse it, and seek the audio to the turn. This is what makes a
-  // flag findable inside a huge merged turn.
+  // Word-precise time for a flag's quote inside its turn: find the quote's char
+  // range, then the timestamped word covering that offset. Falls back to turn.start.
+  const timeForFlag = useCallback(
+    (quote: string, turnIndex: number): number | null => {
+      const turn = turns[turnIndex];
+      if (!turn) return null;
+      const range = findQuoteRange(turn.text || "", quote);
+      const wt = turnWordTimes[turnIndex] || [];
+      if (range) {
+        // Walk the tokens accumulating char length; the token covering range[0]
+        // carries the seek time.
+        let pos = 0;
+        for (const { tok, start } of wt) {
+          if (pos + tok.length > range[0]) {
+            if (typeof start === "number") return start;
+            break;
+          }
+          pos += tok.length;
+        }
+      }
+      return typeof turn.start === "number" ? turn.start : null;
+    },
+    [turns, turnWordTimes],
+  );
+
+  // Jump to a specific FLAG: scroll to its exact highlighted phrase + pulse it, and
+  // seek the audio to that PHRASE's word time (not the turn start). This is what
+  // makes a flag findable + audible inside a huge merged turn.
   const seekToFlag = useCallback(
-    (flagIndex: number, turnIndex: number) => {
+    (flagIndex: number, turnIndex: number, quote: string) => {
       setActiveFlag(flagIndex);
       const mark = flagMarkRefs.current[flagIndex];
-      if (mark) {
-        mark.scrollIntoView({ behavior: "smooth", block: "center" });
-      } else {
-        turnRefs.current[turnIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-      const turn = turns[turnIndex];
-      const el = audioRef.current;
+      (mark ?? turnRefs.current[turnIndex])?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
       setActiveIdx(turnIndex);
-      if (el && turn && typeof turn.start === "number") {
-        el.currentTime = turn.start;
-        void el.play().catch(() => {});
-      }
+      const t = timeForFlag(quote, turnIndex);
+      if (typeof t === "number") seekToTime(t);
     },
-    [turns],
+    [timeForFlag, seekToTime],
   );
 
   const onCorrected = (updated: Note, category?: string) => {
@@ -289,7 +360,7 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                     flag={f}
                     onJump={
                       typeof f.turn_index === "number"
-                        ? () => seekToFlag(i, f.turn_index!)
+                        ? () => seekToFlag(i, f.turn_index!, f.quote)
                         : undefined
                     }
                   />
@@ -317,9 +388,9 @@ export default function TranscriptReviewPage({ noteId }: Props) {
               </Button>
             </Stack>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
-              İşaretli konuşmalar sarı ile vurgulanır. Sesi o ana götürmek için ▶ simgesine,
-              metni düzeltmek için ✎ simgesine dokunun. Konuşmacılar karıştıysa, konuşma
-              akışına göre (soru/cevap) yeniden atamayı deneyin.
+              İşaretli ifadeler sarı ile vurgulanır. Herhangi bir kelimeye tıklayarak sesi
+              tam o ana götürebilirsiniz; metni düzeltmek için ✎ simgesine dokunun. Konuşmacılar
+              karıştıysa, konuşma akışına göre (soru/cevap) yeniden atamayı deneyin.
             </Typography>
             <Divider sx={{ mb: 1.5 }} />
             <Stack spacing={0.5}>
@@ -331,6 +402,8 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                   }}
                   turn={turn}
                   index={i}
+                  wordTimes={turnWordTimes[i] ?? []}
+                  onWordSeek={hasAudio ? seekToTime : () => {}}
                   flags={flagsByTurn[i] ?? []}
                   active={i === activeIdx}
                   activeFlag={activeFlag}
@@ -432,67 +505,91 @@ function findQuoteRange(text: string, quote: string): [number, number] | null {
   return null;
 }
 
-// Render `text` with each flag's quote wrapped in a highlighted <mark>. Overlapping
-// or unfound quotes degrade gracefully (unfound = no highlight, still shown in the
-// flag chip below). The active flag's mark pulses + registers its ref for scrolling.
-function renderHighlighted(
+// Render the turn WORD-BY-WORD: every word is clickable to seek the audio to that
+// word's timestamp (ADR-0030), and words inside a flagged phrase are highlighted as
+// <mark> (amber; green if resolved; the active flag pulses + registers its ref for
+// scrolling). Unfound flag quotes degrade gracefully (no highlight; still in the
+// chip). `wordTimes` is the turn's [{tok,start}] list aligned to its text.
+function renderTurnWords(
   text: string,
+  wordTimes: { tok: string; start: number | null }[],
   flags: TurnFlag[],
   activeFlag: number | null,
   markRefs: React.MutableRefObject<Record<number, HTMLElement | null>>,
+  onWordSeek: (t: number) => void,
 ) {
-  // Collect non-overlapping ranges (first flag wins on overlap), sorted by start.
+  // Flag char-ranges (first flag wins on overlap).
   const ranges: { start: number; end: number; tf: TurnFlag }[] = [];
   for (const tf of flags) {
     const r = findQuoteRange(text, tf.flag.quote || "");
     if (!r) continue;
-    if (ranges.some((x) => r[0] < x.end && r[1] > x.start)) continue; // skip overlap
+    if (ranges.some((x) => r[0] < x.end && r[1] > x.start)) continue;
     ranges.push({ start: r[0], end: r[1], tf });
   }
-  ranges.sort((a, b) => a.start - b.start);
-  if (ranges.length === 0) return text;
+  const flagAt = (charStart: number, charEnd: number) =>
+    ranges.find((r) => charStart < r.end && charEnd > r.start);
 
   const out: React.ReactNode[] = [];
-  let cursor = 0;
-  ranges.forEach((r, i) => {
-    if (r.start > cursor) out.push(text.slice(cursor, r.start));
-    const resolved = r.tf.flag.resolved;
-    const isActive = activeFlag === r.tf.flagIndex;
+  let pos = 0;
+  wordTimes.forEach((wt, i) => {
+    const start = pos;
+    const end = pos + wt.tok.length;
+    pos = end;
+    if (/^\s+$/.test(wt.tok) || wt.tok === "") {
+      out.push(wt.tok);
+      return;
+    }
+    const inFlag = flagAt(start, end);
+    const canSeek = typeof wt.start === "number";
+    // Register the mark ref on the FIRST word of a flag range (for scroll target).
+    const isFlagStart = inFlag && start <= inFlag.start;
+    const resolved = inFlag?.tf.flag.resolved;
+    const isActive = inFlag && activeFlag === inFlag.tf.flagIndex;
     out.push(
       <Box
-        key={`m${i}`}
-        component="mark"
-        ref={(el: HTMLElement | null) => {
-          markRefs.current[r.tf.flagIndex] = el;
-        }}
+        key={`w${i}`}
+        component="span"
+        ref={
+          isFlagStart
+            ? (el: HTMLElement | null) => {
+                markRefs.current[inFlag!.tf.flagIndex] = el;
+              }
+            : undefined
+        }
+        onClick={canSeek ? () => onWordSeek(wt.start as number) : undefined}
         sx={{
-          px: 0.25,
+          cursor: canSeek ? "pointer" : "default",
           borderRadius: 0.5,
-          color: "inherit",
-          bgcolor: resolved ? "rgba(76,175,80,0.35)" : "rgba(255,167,38,0.55)",
+          px: inFlag ? 0.25 : 0,
+          bgcolor: inFlag
+            ? resolved
+              ? "rgba(76,175,80,0.35)"
+              : "rgba(255,167,38,0.55)"
+            : "transparent",
           boxShadow: isActive ? (t) => `0 0 0 2px ${t.palette.warning.main}` : "none",
-          transition: "box-shadow .2s",
-          ...(isActive && !resolved
-            ? { animation: "flagPulse 1s ease-in-out 2" }
-            : {}),
+          transition: "background-color .15s",
+          "&:hover": canSeek
+            ? { bgcolor: inFlag ? "rgba(255,138,0,0.7)" : "rgba(94,53,177,0.14)" }
+            : {},
+          ...(isActive && !resolved ? { animation: "flagPulse 1s ease-in-out 2" } : {}),
           "@keyframes flagPulse": {
             "0%,100%": { bgcolor: "rgba(255,167,38,0.55)" },
             "50%": { bgcolor: "rgba(255,138,0,0.9)" },
           },
         }}
       >
-        {text.slice(r.start, r.end)}
+        {wt.tok}
       </Box>,
     );
-    cursor = r.end;
   });
-  if (cursor < text.length) out.push(text.slice(cursor));
   return out;
 }
 
 interface TurnRowProps {
   turn: Turn;
   index: number;
+  wordTimes: { tok: string; start: number | null }[];
+  onWordSeek: (t: number) => void;
   flags: TurnFlag[];
   active: boolean;
   activeFlag: number | null;
@@ -504,7 +601,7 @@ interface TurnRowProps {
 }
 
 const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
-  { turn, index, flags, active, activeFlag, markRefs, canSeek, onSeek, noteId, onCorrected },
+  { turn, index, wordTimes, onWordSeek, flags, active, activeFlag, markRefs, canSeek, onSeek, noteId, onCorrected },
   ref,
 ) {
   const [editing, setEditing] = useState(false);
@@ -671,8 +768,8 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
           </Stack>
         ) : (
           <>
-            <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
-              {renderHighlighted(turn.text, flags, activeFlag, markRefs)}
+            <Typography variant="body2" sx={{ lineHeight: 1.9 }}>
+              {renderTurnWords(turn.text, wordTimes, flags, activeFlag, markRefs, onWordSeek)}
             </Typography>
             {flagged && (
               <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: "wrap" }}>

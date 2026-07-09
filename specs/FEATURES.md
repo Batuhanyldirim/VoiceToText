@@ -117,11 +117,14 @@ The success gate: a transcript with **≥ 2 distinct speakers**. CPU-only by des
   single generation call, no extra AI cost). A dedicated **review page**
   (`/notes/:id/review`) **highlights the exact flagged phrase** inline over the raw
   transcript (Turkish-aware, whitespace-tolerant match) and scrolls to it — so it's
-  findable even when diarization merged the conversation into one long turn —
-  **plays the flagged audio moment** on click, and lets the doctor **correct the
-  transcript turn** against what was actually said — resolving the flag and
-  capturing a human-verified correction (a future training label). Corrections
-  touch only the transcript, never the note body. *(REQ-171–175; ADR-0029)*
+  findable even when diarization merged the conversation into one long turn.
+  **Word-precise audio seek** (ADR-0030): clicking a flag — or **any word** in the
+  transcript — jumps the player to that word's exact timestamp (persisted per-word
+  with the note), so you don't scrub a 15-minute recording. The doctor can also
+  **correct the transcript turn** against what was actually said — resolving the
+  flag and capturing a human-verified correction (a future training label).
+  Corrections touch only the transcript, never the note body.
+  *(REQ-171–175, REQ-182; ADR-0029, ADR-0030)*
 - **Export** — **PDF** (browser print), **EHR için kopyala** (clean plain text),
   Markdown copy, `.md` download. *(REQ-142)*
 

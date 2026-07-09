@@ -58,6 +58,8 @@ class NoteJob:
     # Audio-linked source transcript (ADR-0019): the turns JSON to persist, and
     # the originating job/stream id whose on-disk audio we copy at persist time.
     transcript_json: Optional[str] = None
+    # Word-timestamped segments JSON for word-precise seek (ADR-0030).
+    segments_json: Optional[str] = None
     audio_source_id: Optional[str] = None
     # Encounter metadata (ADR-0022).
     patient_id: Optional[str] = None
@@ -139,6 +141,7 @@ class NoteJobManager:
         source_name: Optional[str] = None,
         transcribe_seconds: Optional[float] = None,
         transcript_json: Optional[str] = None,
+        segments_json: Optional[str] = None,
         audio_source_id: Optional[str] = None,
         patient_id: Optional[str] = None,
         visit_type: Optional[str] = None,
@@ -158,6 +161,7 @@ class NoteJobManager:
             source_name=source_name,
             transcribe_seconds=transcribe_seconds,
             transcript_json=transcript_json,
+            segments_json=segments_json,
             audio_source_id=audio_source_id,
             patient_id=patient_id,
             visit_type=(visit_type or "").strip() or None,
@@ -272,6 +276,7 @@ class NoteJobManager:
                 transcribe_seconds=job.transcribe_seconds,
                 note_seconds=job.note_seconds,
                 transcript_json=job.transcript_json,
+                segments_json=job.segments_json,
                 visit_type=job.visit_type,
                 chief_complaint=job.chief_complaint,
                 problems_json=_json.dumps(problems or [], ensure_ascii=False) if has_ext else None,

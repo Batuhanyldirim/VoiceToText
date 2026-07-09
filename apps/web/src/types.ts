@@ -20,12 +20,21 @@ export interface Turn {
   corrected?: boolean;
 }
 
+/** A single word with its timestamps (ADR-0030), inside a Segment. */
+export interface Word {
+  word: string;
+  start?: number;
+  end?: number;
+  score?: number;
+}
+
 /** Word/segment level payload from the backend. Shape is loose on purpose. */
 export interface Segment {
   speaker?: string;
   text?: string;
   start?: number;
   end?: number;
+  words?: Word[];
   [key: string]: unknown;
 }
 
@@ -199,6 +208,8 @@ export interface CreateNoteBody {
   transcribe_seconds?: number | null;
   /** Structured source turns to persist for the "Kaynak deşifre" panel (ADR-0019). */
   transcript_json?: Turn[];
+  /** Word-timestamped segments for word-precise audio seek (ADR-0030). */
+  segments_json?: Segment[];
   /** The originating job/stream id whose source audio to link (ADR-0019). */
   audio_source_id?: string;
   /** Encounter metadata captured up front (ADR-0022). */
@@ -324,6 +335,8 @@ export interface Note {
   chief_complaint?: string | null;
   // Audio-linked source transcript (ADR-0019).
   turns?: Turn[];
+  // Word-timestamped segments for word-precise seek (ADR-0030).
+  segments?: Segment[];
   has_audio?: boolean;
   // Extracted structured lists (ADR-0023).
   problems?: Problem[];

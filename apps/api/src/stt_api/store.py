@@ -63,6 +63,12 @@ class SavedNote:
     # Source transcript turns as a JSON string [{speaker,text,start,end}] (ADR-0019).
     # NULL for notes made before this feature / from plain-text-only transcripts.
     transcript_json: Optional[str] = None
+    # Word-timestamped segments as a JSON string (ADR-0030): the pipeline's
+    # segments, each with words [{word,start,end}]. Powers WORD-PRECISE audio seek
+    # (click a flag or a word -> jump the player to that exact moment) — turns only
+    # carry the whole-turn start/end, useless when diarization merged everything
+    # into one long turn. NULL for notes predating this / plain-text transcripts.
+    segments_json: Optional[str] = None
     # Encounter metadata captured up front (ADR-0022). Both optional/free-text.
     visit_type: Optional[str] = None
     chief_complaint: Optional[str] = None
@@ -87,6 +93,11 @@ class SavedNote:
     def turns(self) -> list:
         """The source transcript turns (parsed from transcript_json), or []."""
         return _parse_json_list(self.transcript_json)
+
+    @property
+    def segments(self) -> list:
+        """Word-timestamped segments (parsed from segments_json), or [] (ADR-0030)."""
+        return _parse_json_list(self.segments_json)
 
     @property
     def problems(self) -> list:
@@ -222,6 +233,9 @@ class NoteStore:
             # Audio-linked source transcript (ADR-0019): the turns as JSON.
             if "transcript_json" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN transcript_json TEXT")
+            # Word-timestamped segments for word-precise seek (ADR-0030).
+            if "segments_json" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN segments_json TEXT")
             # Encounter metadata (ADR-0022): visit type + chief complaint.
             if "visit_type" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN visit_type TEXT")
@@ -272,15 +286,16 @@ class NoteStore:
                      transcript, note, transcribe_seconds, note_seconds,
                      edited_note, status, finalized_at, patient_id, transcript_json,
                      visit_type, chief_complaint, problems_json, medications_json,
-                     review_flags_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     review_flags_json, segments_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
                  note.transcribe_seconds, note.note_seconds,
                  note.edited_note, note.status, note.finalized_at, note.patient_id,
                  note.transcript_json, note.visit_type, note.chief_complaint,
-                 note.problems_json, note.medications_json, note.review_flags_json),
+                 note.problems_json, note.medications_json, note.review_flags_json,
+                 note.segments_json),
             )
 
     def list(self, patient_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:

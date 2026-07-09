@@ -320,6 +320,7 @@ export default function WorkspaceView() {
                 sourceName={file?.name ?? undefined}
                 transcribeSeconds={view.result.transcribe_seconds ?? null}
                 turns={view.result.turns ?? undefined}
+                segments={view.result.segments ?? undefined}
                 audioSourceId={view.jobId}
                 onGenerating={handleNoteStarted}
                 onBack={handleBackToTranscript}

@@ -481,6 +481,9 @@ class NoteRequest(BaseModel):
     # for the "Kaynak deşifre" panel, and the originating job/stream id whose audio
     # to copy into the durable store. Both optional (reused transcripts have neither).
     transcript_json: Optional[list] = None
+    # Word-timestamped segments (ADR-0030): the pipeline's segments with per-word
+    # start/end, for word-precise audio seek on the review page. Optional.
+    segments_json: Optional[list] = None
     audio_source_id: Optional[str] = None
     # Encounter metadata captured up front (ADR-0022) — all optional.
     patient_id: Optional[str] = None
@@ -627,11 +630,17 @@ async def create_note(body: NoteRequest) -> dict:
         json.dumps(body.transcript_json, ensure_ascii=False)
         if body.transcript_json else None
     )
+    # Word-timestamped segments for word-precise seek (ADR-0030), if provided.
+    segments_json = (
+        json.dumps(body.segments_json, ensure_ascii=False)
+        if body.segments_json else None
+    )
     job = note_manager.register(
         body.transcript, opts,
         title=body.title, source_name=body.source_name,
         transcribe_seconds=body.transcribe_seconds,
         transcript_json=transcript_json,
+        segments_json=segments_json,
         audio_source_id=body.audio_source_id,
         patient_id=body.patient_id,
         visit_type=body.visit_type,
@@ -682,6 +691,8 @@ def _saved_note_response(saved) -> dict:
         # Audio-linked source transcript (ADR-0019): the turns + whether the
         # source recording is available at GET /notes/{id}/audio.
         "turns": saved.turns,
+        # Word-timestamped segments for word-precise seek (ADR-0030); [] if absent.
+        "segments": saved.segments,
         "has_audio": note_audio_store.path(saved.id) is not None,
         "result": {
             "note": saved.effective_note,

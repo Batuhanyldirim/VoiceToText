@@ -530,6 +530,11 @@ in a rapid Q&A intake into one speaker (~92% of speech).
   replace ONLY the transcript turns (`set_transcript_turns` / `update_transcript_turn`);
   the AI note body and the clinician edit overlay (ADR-0015) SHALL remain
   independent. *(→ ADR-0030, ADR-0029)*
+- **REQ-182** (Event) — THE SYSTEM SHALL persist per-word timestamps with a note
+  (`segments_json`) and, on the review page, WHEN the clinician clicks a review flag
+  or any transcript word, SHALL seek the audio player to that word's exact timestamp
+  (falling back to the turn start when word timing is absent). This makes a flagged
+  phrase audible without scrubbing a long merged turn. *(→ ADR-0030, ADR-0019)*
 
 ## Home dashboard & navigation
 

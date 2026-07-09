@@ -27,6 +27,7 @@ import type {
   NoteTemplate,
   ProviderInfo,
   Patient,
+  Segment,
   TranscriptInfo,
   Turn,
 } from "../types";
@@ -76,6 +77,8 @@ interface NoteGeneratorProps {
   /** Structured source turns (ADR-0019) — persisted with the note for the
    *  "Kaynak deşifre" panel. Present in the transcription flow. */
   turns?: Turn[];
+  /** Word-timestamped segments (ADR-0030) — persisted for word-precise seek. */
+  segments?: Segment[];
   /** The originating job/stream id whose source audio to link (ADR-0019). */
   audioSourceId?: string;
   onGenerating: (noteId: string) => void;
@@ -89,6 +92,7 @@ export default function NoteGenerator({
   sourceName,
   transcribeSeconds,
   turns,
+  segments,
   audioSourceId,
   onGenerating,
   onBack,
@@ -298,6 +302,7 @@ export default function NoteGenerator({
     // Audio-linked source transcript (ADR-0019) — only present in the
     // transcription flow (preloaded); reused out/ transcripts have no live audio.
     if (turns && turns.length > 0) body.transcript_json = turns;
+    if (segments && segments.length > 0) body.segments_json = segments;
     if (audioSourceId) body.audio_source_id = audioSourceId;
     // Encounter metadata (ADR-0022) — all optional.
     if (visitType.trim()) body.visit_type = visitType.trim();

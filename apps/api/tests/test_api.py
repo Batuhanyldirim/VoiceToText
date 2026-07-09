@@ -48,6 +48,15 @@ def test_get_note_returns_review_flags_and_turns(client):
     assert body["turns"][1]["start"] == 2.0
 
 
+def test_get_note_returns_word_segments(client):
+    import json
+    segs = [{"start": 1.0, "end": 2.0, "text": "Hanifi",
+             "words": [{"word": "Hanifi", "start": 1.0, "end": 1.7}]}]
+    _seed_note(client, "n1", segments_json=json.dumps(segs, ensure_ascii=False))
+    body = client.get("/notes/n1").json()
+    assert body["segments"][0]["words"][0]["start"] == 1.0  # word-precise seek data
+
+
 def test_patch_turn_corrects_text_and_resolves_flag(client):
     _seed_with_turns(client)
     r = client.patch("/notes/n1/turns", json={"turn_index": 1, "text": "Günde 50 mg parasetamol."})
