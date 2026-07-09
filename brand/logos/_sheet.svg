@@ -1,0 +1,104 @@
+<svg width="1000" height="1180" viewBox="0 0 1000 1180" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1000" height="1180" fill="#F7F8FA"/>
+  <text x="60" y="70" font-size="34" font-weight="700" fill="#10202A">Marka adayları — logo yönleri</text>
+  <text x="60" y="104" font-size="17" fill="#5B6B76">Turkish clinical voice → note tool · top 4 of 6 shortlisted</text>
+
+  <!-- ================= DIVIT (top pick) ================= -->
+  <g transform="translate(60,150)">
+    <rect x="0" y="0" width="880" height="220" rx="18" fill="#FFFFFF" stroke="#E3E8EC"/>
+    <rect x="0" y="0" width="6" height="220" rx="3" fill="#C6963F"/>
+    <!-- mark -->
+    <g transform="translate(40,42) scale(1.05)">
+      <path d="M40 74 h48 a6 6 0 0 1 6 6 l-5 26 a10 10 0 0 1 -10 8 H49 a10 10 0 0 1 -10 -8 l-5 -26 a6 6 0 0 1 6 -6 Z" fill="#17414E"/>
+      <ellipse cx="64" cy="79" rx="24" ry="4.5" fill="#2C7C8C" opacity="0.55"/>
+      <g stroke="#17414E" stroke-width="6.5" stroke-linecap="round"><path d="M50 66 V52"/><path d="M64 66 V34"/><path d="M78 66 V46"/></g>
+      <path d="M104 22 L74 60" stroke="#C6963F" stroke-width="7" stroke-linecap="round"/>
+      <path d="M104 22 l6 -6 6 8 -8 6 z" fill="#C6963F"/>
+      <circle cx="74" cy="60" r="6.5" fill="#C6963F"/>
+    </g>
+    <!-- wordmark + copy -->
+    <text x="240" y="86" font-size="52" font-weight="600" fill="#10202A" letter-spacing="-1">divit</text>
+    <text x="242" y="120" font-size="19" fill="#17414E" font-weight="600">Siz konuşun, gerisini Divit’e bırakın.</text>
+    <text x="242" y="150" font-size="15" fill="#5B6B76">Osmanlı kâtibinin hokka + kamış kalem çantası — sesi yazıya çeviren araç.</text>
+    <text x="242" y="176" font-size="13" fill="#8A97A0">EN İYİ SEÇİM · sahiplenilebilir, Türkçe-köklü, sesten-nota metaforu</text>
+    <!-- palette dots -->
+    <circle cx="700" cy="40" r="11" fill="#17414E"/><circle cx="730" cy="40" r="11" fill="#C6963F"/><circle cx="760" cy="40" r="11" fill="#10202A"/>
+    <!-- favicon scale preview -->
+    <g transform="translate(792,150) scale(0.26)">
+      <path d="M40 74 h48 a6 6 0 0 1 6 6 l-5 26 a10 10 0 0 1 -10 8 H49 a10 10 0 0 1 -10 -8 l-5 -26 a6 6 0 0 1 6 -6 Z" fill="#17414E"/>
+      <g stroke="#17414E" stroke-width="6.5" stroke-linecap="round"><path d="M50 66 V52"/><path d="M64 66 V34"/><path d="M78 66 V46"/></g>
+      <path d="M104 22 L74 60" stroke="#C6963F" stroke-width="7" stroke-linecap="round"/><circle cx="74" cy="60" r="6.5" fill="#C6963F"/>
+    </g>
+    <text x="806" y="188" font-size="11" fill="#8A97A0">16px</text>
+  </g>
+
+  <!-- ================= EMANET ================= -->
+  <g transform="translate(60,390)">
+    <rect x="0" y="0" width="880" height="220" rx="18" fill="#FFFFFF" stroke="#E3E8EC"/>
+    <rect x="0" y="0" width="6" height="220" rx="3" fill="#1F4D3F"/>
+    <g transform="translate(40,42) scale(1.05)">
+      <path d="M20 60 a44 44 0 0 0 44 44 a44 44 0 0 0 44 -44 a12 12 0 0 0 -22 0 a22 22 0 0 1 -44 0 a12 12 0 0 0 -22 0 Z" fill="#1F4D3F"/>
+      <g stroke="#D2A24C" stroke-width="7" stroke-linecap="round"><path d="M50 58 V72"/><path d="M64 46 V72"/><path d="M78 54 V72"/></g>
+      <circle cx="64" cy="34" r="4" fill="#D2A24C"/>
+    </g>
+    <text x="240" y="86" font-size="52" font-weight="500" fill="#10202A" letter-spacing="1">emanet</text>
+    <text x="242" y="120" font-size="19" fill="#1F4D3F" font-weight="600">Hasta verisi emanet; bu cihazdan çıkmaz.</text>
+    <text x="242" y="150" font-size="15" fill="#5B6B76">Korunmak üzere teslim edilen değerli şey — cihazdan çıkmayan PHI’nin ahlaki sözü.</text>
+    <text x="242" y="176" font-size="13" fill="#8A97A0">Hekim jürisinin 1’incisi · en derin güven kelimesi (dizi çağrışımı riski)</text>
+    <circle cx="700" cy="40" r="11" fill="#1F4D3F"/><circle cx="730" cy="40" r="11" fill="#D2A24C"/><circle cx="760" cy="40" r="11" fill="#16211C"/>
+    <g transform="translate(792,150) scale(0.26)">
+      <path d="M20 60 a44 44 0 0 0 44 44 a44 44 0 0 0 44 -44 a12 12 0 0 0 -22 0 a22 22 0 0 1 -44 0 a12 12 0 0 0 -22 0 Z" fill="#1F4D3F"/>
+      <g stroke="#D2A24C" stroke-width="7" stroke-linecap="round"><path d="M50 58 V72"/><path d="M64 46 V72"/><path d="M78 54 V72"/></g>
+    </g>
+    <text x="806" y="188" font-size="11" fill="#8A97A0">16px</text>
+  </g>
+
+  <!-- ================= SIRDAŞ ================= -->
+  <g transform="translate(60,630)">
+    <rect x="0" y="0" width="880" height="220" rx="18" fill="#FFFFFF" stroke="#E3E8EC"/>
+    <rect x="0" y="0" width="6" height="220" rx="3" fill="#2A3D66"/>
+    <g transform="translate(40,42) scale(1.05)">
+      <rect x="12" y="12" width="104" height="104" rx="30" fill="#2A3D66"/>
+      <path d="M40 34 a44 44 0 0 0 0 60" stroke="#EBE7DE" stroke-width="7" stroke-linecap="round" fill="none"/>
+      <path d="M88 34 a44 44 0 0 1 0 60" stroke="#EBE7DE" stroke-width="7" stroke-linecap="round" fill="none"/>
+      <g stroke="#C97B5A" stroke-width="7" stroke-linecap="round"><path d="M54 54 V74"/><path d="M64 44 V84"/><path d="M74 58 V70"/></g>
+    </g>
+    <text x="240" y="86" font-size="52" font-weight="600" fill="#10202A" letter-spacing="-0.5">sırdaş</text>
+    <text x="242" y="120" font-size="19" fill="#2A3D66" font-weight="600">Hastanızla aranızda kalır.</text>
+    <text x="242" y="150" font-size="15" fill="#5B6B76">Sır + -daş: her şeyi anlattığınız, aranızda kalacağından emin olduğunuz sırdaş.</text>
+    <text x="242" y="176" font-size="13" fill="#8A97A0">Mahremiyeti “güvenlik” değil “yakınlık” olarak kurar · ş harfi (uluslararası) riski</text>
+    <circle cx="700" cy="40" r="11" fill="#2A3D66"/><circle cx="730" cy="40" r="11" fill="#C97B5A"/><circle cx="760" cy="40" r="11" fill="#16203A"/>
+    <g transform="translate(792,150) scale(0.26)">
+      <rect x="12" y="12" width="104" height="104" rx="30" fill="#2A3D66"/>
+      <path d="M40 34 a44 44 0 0 0 0 60" stroke="#EBE7DE" stroke-width="7" stroke-linecap="round" fill="none"/>
+      <path d="M88 34 a44 44 0 0 1 0 60" stroke="#EBE7DE" stroke-width="7" stroke-linecap="round" fill="none"/>
+      <g stroke="#C97B5A" stroke-width="7" stroke-linecap="round"><path d="M64 44 V84"/></g>
+    </g>
+    <text x="806" y="188" font-size="11" fill="#8A97A0">16px</text>
+  </g>
+
+  <!-- ================= NABIZ ================= -->
+  <g transform="translate(60,870)">
+    <rect x="0" y="0" width="880" height="220" rx="18" fill="#FFFFFF" stroke="#E3E8EC"/>
+    <rect x="0" y="0" width="6" height="220" rx="3" fill="#0E6E6E"/>
+    <g transform="translate(40,42) scale(1.05)">
+      <circle cx="64" cy="64" r="52" fill="#0E6E6E"/>
+      <path d="M20 64 h10 l6 -22 6 44 6 -34 6 24 6 -12 h6" stroke="#F2F5F4" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M78 64 h30" stroke="#F2F5F4" stroke-width="6" stroke-linecap="round" fill="none"/>
+      <g stroke="#E4614B" stroke-width="4" stroke-linecap="round"><path d="M80 78 h24"/><path d="M80 88 h16"/></g>
+    </g>
+    <text x="240" y="86" font-size="52" font-weight="700" fill="#10202A" letter-spacing="-0.5">nabız</text>
+    <text x="242" y="120" font-size="19" fill="#0E6E6E" font-weight="600">Muayenenin nabzını tutar.</text>
+    <text x="242" y="150" font-size="15" fill="#5B6B76">Nabız dalgası = ses dalgası = yazı çizgisi: aynı çizgi. En güçlü logo motoru.</text>
+    <text x="242" y="176" font-size="13" fill="#8A97A0">En “tıbbi” aday · mahremiyet/ses-nota hikâyesini ad taşımıyor</text>
+    <circle cx="700" cy="40" r="11" fill="#0E6E6E"/><circle cx="730" cy="40" r="11" fill="#E4614B"/><circle cx="760" cy="40" r="11" fill="#14252A"/>
+    <g transform="translate(792,150) scale(0.26)">
+      <circle cx="64" cy="64" r="52" fill="#0E6E6E"/>
+      <path d="M20 64 h10 l6 -22 6 44 6 -34 6 24 6 -12 h6" stroke="#F2F5F4" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M78 64 h30" stroke="#F2F5F4" stroke-width="6" stroke-linecap="round" fill="none"/>
+    </g>
+    <text x="806" y="188" font-size="11" fill="#8A97A0">16px</text>
+  </g>
+
+  <text x="60" y="1130" font-size="13" fill="#8A97A0">Ayrıca kısa listede: Kâtip (kalem-nib), Mühür (mühür halkası). 40 aday · 3 uzman jüri (Türkçe dilbilimci, marka stratejisti, hekim).</text>
+</svg>

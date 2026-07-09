@@ -1,0 +1,18 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Emanet logo">
+  <!-- Emanet: cupped hands cradling a soundwave — patient data entrusted, kept safe. -->
+  <defs>
+    <linearGradient id="emanet-hand" x1="24" y1="60" x2="104" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#255C4B"/>
+      <stop offset="1" stop-color="#1F4D3F"/>
+    </linearGradient>
+  </defs>
+  <!-- two mirrored cupped hands (open crescents) meeting at the bottom -->
+  <path d="M20 60 a44 44 0 0 0 44 44 a44 44 0 0 0 44 -44 a12 12 0 0 0 -22 0 a22 22 0 0 1 -44 0 a12 12 0 0 0 -22 0 Z" fill="url(#emanet-hand)"/>
+  <!-- cradled soundwave -->
+  <g stroke="#D2A24C" stroke-width="7" stroke-linecap="round">
+    <path d="M50 58 V72"/>
+    <path d="M64 46 V72"/>
+    <path d="M78 54 V72"/>
+  </g>
+  <circle cx="64" cy="34" r="4" fill="#D2A24C" opacity="0.85"/>
+</svg>

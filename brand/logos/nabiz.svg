@@ -1,0 +1,19 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nabız logo">
+  <!-- Nabız: one continuous stroke — audio waveform on the left flattening into a written text baseline on the right. -->
+  <defs>
+    <linearGradient id="nabiz-bg" x1="16" y1="16" x2="112" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E7C7C"/>
+      <stop offset="1" stop-color="#0E6E6E"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="52" fill="url(#nabiz-bg)"/>
+  <!-- pulse becoming baseline -->
+  <path d="M20 64 h10 l6 -22 6 44 6 -34 6 24 6 -12 h6"
+        stroke="#F2F5F4" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M78 64 h30" stroke="#F2F5F4" stroke-width="6" stroke-linecap="round" fill="none"/>
+  <!-- ruled text lines under the baseline -->
+  <g stroke="#E4614B" stroke-width="4" stroke-linecap="round" opacity="0.9">
+    <path d="M80 78 h24"/>
+    <path d="M80 88 h16"/>
+  </g>
+</svg>

@@ -1,0 +1,19 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sırdaş logo">
+  <!-- Sırdaş: two facing profiles (mirrored parentheses) holding a shared soundwave between them. -->
+  <defs>
+    <linearGradient id="sirdas-bg" x1="20" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#31477A"/>
+      <stop offset="1" stop-color="#2A3D66"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="104" height="104" rx="30" fill="url(#sirdas-bg)"/>
+  <!-- two facing brackets = two confidants -->
+  <path d="M40 34 a44 44 0 0 0 0 60" stroke="#EBE7DE" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M88 34 a44 44 0 0 1 0 60" stroke="#EBE7DE" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <!-- the secret shared between them: a soundwave -->
+  <g stroke="#C97B5A" stroke-width="7" stroke-linecap="round">
+    <path d="M54 54 V74"/>
+    <path d="M64 44 V84"/>
+    <path d="M74 58 V70"/>
+  </g>
+</svg>

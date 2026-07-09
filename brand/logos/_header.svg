@@ -1,0 +1,13 @@
+<svg width="420" height="72" viewBox="0 0 420 72" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Helvetica, Arial, sans-serif">
+  <rect width="420" height="72" fill="#FFFFFF"/>
+  <g transform="translate(20,19) scale(0.265)">
+    <path d="M40 74 h48 a6 6 0 0 1 6 6 l-5 26 a10 10 0 0 1 -10 8 H49 a10 10 0 0 1 -10 -8 l-5 -26 a6 6 0 0 1 6 -6 Z" fill="#17414E"/>
+    <ellipse cx="64" cy="79" rx="24" ry="4.5" fill="#2C7C8C" opacity="0.55"/>
+    <g stroke="#17414E" stroke-width="6.5" stroke-linecap="round"><path d="M50 66 V52"/><path d="M64 66 V34"/><path d="M78 66 V46"/></g>
+    <path d="M104 22 L74 60" stroke="#C6963F" stroke-width="7" stroke-linecap="round"/>
+    <path d="M104 22 l6 -6 6 8 -8 6 z" fill="#C6963F"/>
+    <circle cx="74" cy="60" r="6.5" fill="#C6963F"/>
+  </g>
+  <text x="66" y="45" font-size="26" font-weight="800" letter-spacing="-0.5" fill="#1a1a2e">Divit</text>
+  <text x="150" y="45" font-size="13" fill="#5a5a72">·  Ana Sayfa    Hastalar</text>
+</svg>

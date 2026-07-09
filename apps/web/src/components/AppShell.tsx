@@ -9,12 +9,12 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import NotesSidebar, { SIDEBAR_WIDTH } from "./NotesSidebar";
+import DivitLogo from "./DivitLogo";
 import { navigate, usePath } from "../utils/router";
 
 // Persistent app chrome (sidebar + top bar) shared by every route (ADR-0024/0025).
@@ -126,22 +126,9 @@ export default function AppShell({ children, activeId = null, refreshToken = 0 }
               sx={{ display: "flex", alignItems: "center", gap: 1.25, cursor: "pointer" }}
               onClick={() => navigate("/")}
             >
-              <Box
-                sx={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 2,
-                  bgcolor: "primary.main",
-                  color: "primary.contrastText",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <GraphicEqRoundedIcon fontSize="small" />
-              </Box>
+              <DivitLogo size={34} />
               <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: "-0.02em" }}>
-                VoiceToText
+                Divit
               </Typography>
             </Box>
 
