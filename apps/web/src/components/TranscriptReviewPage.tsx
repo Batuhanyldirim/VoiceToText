@@ -58,7 +58,12 @@ export default function TranscriptReviewPage({ noteId }: Props) {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [activeFlag, setActiveFlag] = useState<number | null>(null);
   const turnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  // The highlighted <mark> element for each flag (by its index in `flags`), so we
+  // can scroll to the EXACT phrase — not just the turn — which matters when
+  // diarization merged everything into one giant turn and every flag shares it.
+  const flagMarkRefs = useRef<Record<number, HTMLElement | null>>({});
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -86,12 +91,13 @@ export default function TranscriptReviewPage({ noteId }: Props) {
   const hasAudio = !!note?.has_audio;
   const audioUrl = hasAudio ? noteAudioUrl(noteId) : null;
 
-  // Map turn index → the flags anchored to it (for inline highlighting).
+  // Map turn index → its flags, each carrying its GLOBAL index in `flags` (so the
+  // turn can register that flag's <mark> ref for exact-phrase scrolling/highlight).
   const flagsByTurn = useMemo(() => {
-    const m: Record<number, ReviewFlag[]> = {};
-    for (const f of flags) {
-      if (typeof f.turn_index === "number") (m[f.turn_index] ||= []).push(f);
-    }
+    const m: Record<number, { flag: ReviewFlag; flagIndex: number }[]> = {};
+    flags.forEach((f, flagIndex) => {
+      if (typeof f.turn_index === "number") (m[f.turn_index] ||= []).push({ flag: f, flagIndex });
+    });
     return m;
   }, [flags]);
 
@@ -109,6 +115,29 @@ export default function TranscriptReviewPage({ noteId }: Props) {
         void el.play().catch(() => {
           /* autoplay may be blocked; controls remain */
         });
+      }
+    },
+    [turns],
+  );
+
+  // Jump to a specific FLAG: scroll to its exact highlighted phrase (falling back
+  // to the turn) + pulse it, and seek the audio to the turn. This is what makes a
+  // flag findable inside a huge merged turn.
+  const seekToFlag = useCallback(
+    (flagIndex: number, turnIndex: number) => {
+      setActiveFlag(flagIndex);
+      const mark = flagMarkRefs.current[flagIndex];
+      if (mark) {
+        mark.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else {
+        turnRefs.current[turnIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      const turn = turns[turnIndex];
+      const el = audioRef.current;
+      setActiveIdx(turnIndex);
+      if (el && turn && typeof turn.start === "number") {
+        el.currentTime = turn.start;
+        void el.play().catch(() => {});
       }
     },
     [turns],
@@ -259,7 +288,9 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                     key={i}
                     flag={f}
                     onJump={
-                      typeof f.turn_index === "number" ? () => seekToTurn(f.turn_index!) : undefined
+                      typeof f.turn_index === "number"
+                        ? () => seekToFlag(i, f.turn_index!)
+                        : undefined
                     }
                   />
                 ))}
@@ -302,6 +333,8 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                   index={i}
                   flags={flagsByTurn[i] ?? []}
                   active={i === activeIdx}
+                  activeFlag={activeFlag}
+                  markRefs={flagMarkRefs}
                   canSeek={hasAudio && typeof turn.start === "number"}
                   onSeek={() => seekToTurn(i)}
                   noteId={noteId}
@@ -373,11 +406,97 @@ function FlagRow({ flag, onJump }: { flag: ReviewFlag; onJump?: () => void }) {
 
 // --- A single transcript turn (highlighted if flagged; inline-editable) -----
 
+interface TurnFlag {
+  flag: ReviewFlag;
+  flagIndex: number;
+}
+
+// Locate a flag's quote inside the turn text so we can highlight the EXACT phrase.
+// Tolerant like the backend's fuzzy match: case-insensitive (Turkish İ/I aware) and
+// whitespace-collapsed, so "Marmaray'ın elbisesi" is found even if spacing differs.
+// Returns the [start,end) char range in the ORIGINAL text, or null if not found.
+function findQuoteRange(text: string, quote: string): [number, number] | null {
+  if (!text || !quote) return null;
+  const trLower = (s: string) =>
+    s.replace(/İ/g, "i").replace(/I/g, "ı").toLocaleLowerCase("tr");
+  // Build a whitespace-flexible, escaped regex from the folded quote.
+  const esc = trLower(quote.trim())
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+  try {
+    const m = new RegExp(esc).exec(trLower(text));
+    if (m && m.index >= 0) return [m.index, m.index + m[0].length];
+  } catch {
+    /* bad regex → no highlight */
+  }
+  return null;
+}
+
+// Render `text` with each flag's quote wrapped in a highlighted <mark>. Overlapping
+// or unfound quotes degrade gracefully (unfound = no highlight, still shown in the
+// flag chip below). The active flag's mark pulses + registers its ref for scrolling.
+function renderHighlighted(
+  text: string,
+  flags: TurnFlag[],
+  activeFlag: number | null,
+  markRefs: React.MutableRefObject<Record<number, HTMLElement | null>>,
+) {
+  // Collect non-overlapping ranges (first flag wins on overlap), sorted by start.
+  const ranges: { start: number; end: number; tf: TurnFlag }[] = [];
+  for (const tf of flags) {
+    const r = findQuoteRange(text, tf.flag.quote || "");
+    if (!r) continue;
+    if (ranges.some((x) => r[0] < x.end && r[1] > x.start)) continue; // skip overlap
+    ranges.push({ start: r[0], end: r[1], tf });
+  }
+  ranges.sort((a, b) => a.start - b.start);
+  if (ranges.length === 0) return text;
+
+  const out: React.ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach((r, i) => {
+    if (r.start > cursor) out.push(text.slice(cursor, r.start));
+    const resolved = r.tf.flag.resolved;
+    const isActive = activeFlag === r.tf.flagIndex;
+    out.push(
+      <Box
+        key={`m${i}`}
+        component="mark"
+        ref={(el: HTMLElement | null) => {
+          markRefs.current[r.tf.flagIndex] = el;
+        }}
+        sx={{
+          px: 0.25,
+          borderRadius: 0.5,
+          color: "inherit",
+          bgcolor: resolved ? "rgba(76,175,80,0.35)" : "rgba(255,167,38,0.55)",
+          boxShadow: isActive ? (t) => `0 0 0 2px ${t.palette.warning.main}` : "none",
+          transition: "box-shadow .2s",
+          ...(isActive && !resolved
+            ? { animation: "flagPulse 1s ease-in-out 2" }
+            : {}),
+          "@keyframes flagPulse": {
+            "0%,100%": { bgcolor: "rgba(255,167,38,0.55)" },
+            "50%": { bgcolor: "rgba(255,138,0,0.9)" },
+          },
+        }}
+      >
+        {text.slice(r.start, r.end)}
+      </Box>,
+    );
+    cursor = r.end;
+  });
+  if (cursor < text.length) out.push(text.slice(cursor));
+  return out;
+}
+
 interface TurnRowProps {
   turn: Turn;
   index: number;
-  flags: ReviewFlag[];
+  flags: TurnFlag[];
   active: boolean;
+  activeFlag: number | null;
+  markRefs: React.MutableRefObject<Record<number, HTMLElement | null>>;
   canSeek: boolean;
   onSeek: () => void;
   noteId: string;
@@ -385,7 +504,7 @@ interface TurnRowProps {
 }
 
 const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
-  { turn, index, flags, active, canSeek, onSeek, noteId, onCorrected },
+  { turn, index, flags, active, activeFlag, markRefs, canSeek, onSeek, noteId, onCorrected },
   ref,
 ) {
   const [editing, setEditing] = useState(false);
@@ -394,7 +513,7 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
   const [err, setErr] = useState<string | null>(null);
 
   const flagged = flags.length > 0;
-  const openFlagged = flags.some((f) => !f.resolved);
+  const openFlagged = flags.some((tf) => !tf.flag.resolved);
   const color = speakerColor(turn.speaker || "");
 
   const save = async () => {
@@ -406,7 +525,7 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
     setErr(null);
     try {
       const updated = await correctTurn(noteId, index, draft.trim());
-      onCorrected(updated, flags[0]?.category);
+      onCorrected(updated, flags[0]?.flag.category);
       setEditing(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Kaydedilemedi");
@@ -503,12 +622,12 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
           </Stack>
         ) : (
           <>
-            <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
-              {turn.text}
+            <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
+              {renderHighlighted(turn.text, flags, activeFlag, markRefs)}
             </Typography>
             {flagged && (
               <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: "wrap" }}>
-                {flags.map((f, k) => (
+                {flags.map(({ flag: f }, k) => (
                   <Chip
                     key={k}
                     size="small"

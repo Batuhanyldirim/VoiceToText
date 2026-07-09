@@ -115,7 +115,9 @@ The success gate: a transcript with **≥ 2 distinct speakers**. CPU-only by des
 - **STT-error review & correction** — the note flags likely mistranscriptions
   (misheard drug/dose/negation/name) as **structured, located** review flags (same
   single generation call, no extra AI cost). A dedicated **review page**
-  (`/notes/:id/review`) highlights the flagged turns over the raw transcript,
+  (`/notes/:id/review`) **highlights the exact flagged phrase** inline over the raw
+  transcript (Turkish-aware, whitespace-tolerant match) and scrolls to it — so it's
+  findable even when diarization merged the conversation into one long turn —
   **plays the flagged audio moment** on click, and lets the doctor **correct the
   transcript turn** against what was actually said — resolving the flag and
   capturing a human-verified correction (a future training label). Corrections
