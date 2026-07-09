@@ -7,6 +7,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Collapse,
   Container,
   Divider,
   IconButton,
@@ -25,6 +26,7 @@ import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
 import DoneRoundedIcon from "@mui/icons-material/DoneRounded";
 import UndoRoundedIcon from "@mui/icons-material/UndoRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import type { Note, ReviewFlag, Segment, Turn } from "../types";
 import { correctTurn, getNote, noteAudioUrl, rediarizeNote, resolveFlag } from "../config/api";
 import { navigate } from "../utils/router";
@@ -153,11 +155,38 @@ export default function TranscriptReviewPage({ noteId }: Props) {
   const openFlags = flags.filter((f) => !f.resolved);
   const resolvedCount = flags.length - openFlags.length;
 
-  // The one seek primitive: move the player to an absolute time + play.
+  // Per-flag context: the flagged phrase plus a window of surrounding transcript
+  // (so the doctor sees enough to judge WITHOUT scrolling the full transcript).
+  // Returns {before, quote, after} char slices of the turn text, or null when the
+  // quote can't be located (a locationless flag falls back to quote-only).
+  const flagContext = useCallback(
+    (flag: ReviewFlag): { before: string; quote: string; after: string } | null => {
+      if (typeof flag.turn_index !== "number") return null;
+      const turn = turns[flag.turn_index];
+      if (!turn?.text) return null;
+      const range = findQuoteRange(turn.text, flag.quote || "");
+      if (!range) return null;
+      const PAD = 90; // chars of context on each side
+      const b0 = Math.max(0, range[0] - PAD);
+      const a1 = Math.min(turn.text.length, range[1] + PAD);
+      return {
+        before: (b0 > 0 ? "…" : "") + turn.text.slice(b0, range[0]),
+        quote: turn.text.slice(range[0], range[1]),
+        after: turn.text.slice(range[1], a1) + (a1 < turn.text.length ? "…" : ""),
+      };
+    },
+    [turns],
+  );
+
+  // The one seek primitive: move the player to an absolute time + play. Start a
+  // short LEAD_IN before the target so the doctor has a moment to get ready and
+  // hears the run-up to the phrase; clamped at 0 so early timestamps don't go
+  // negative.
   const seekToTime = useCallback((seconds: number) => {
     const el = audioRef.current;
     if (!el) return;
-    el.currentTime = seconds;
+    const LEAD_IN_S = 0.6;
+    el.currentTime = Math.max(0, seconds - LEAD_IN_S);
     void el.play().catch(() => {
       /* autoplay may be blocked; controls remain */
     });
@@ -238,6 +267,31 @@ export default function TranscriptReviewPage({ noteId }: Props) {
       setResolvingFlag(null);
     }
   };
+
+  // Correct a flag's phrase in place: replace the flagged quote inside its turn
+  // with `newPhrase`, then persist the whole turn (reuses the same turn-correction
+  // path + flag resolution as ADR-0029). Keeps the surrounding turn text intact.
+  const correctFlagPhrase = useCallback(
+    async (turnIndex: number, quote: string, newPhrase: string): Promise<boolean> => {
+      const turn = turns[turnIndex];
+      if (!turn) return false;
+      const range = findQuoteRange(turn.text || "", quote);
+      const oldText = turn.text || "";
+      const newText = range
+        ? oldText.slice(0, range[0]) + newPhrase + oldText.slice(range[1])
+        : // no located range (shouldn't happen for a located flag) — leave text, just
+          // let the caller fall back; return false so the UI keeps the phrase editor open.
+          null;
+      if (newText === null || newText.trim() === oldText.trim()) return false;
+      const updated = await correctTurn(noteId, turnIndex, newText.trim());
+      setNote(updated);
+      setToast("Düzeltme kaydedildi.");
+      return true;
+    },
+    [turns, noteId],
+  );
+
+  const [showFullTranscript, setShowFullTranscript] = useState(false);
 
   const [rediarBusy, setRediarBusy] = useState(false);
   const doRediar = async () => {
@@ -362,23 +416,34 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                 <Chip size="small" label={`${resolvedCount} çözüldü`} variant="outlined" />
               )}
             </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
+              Her işaret için şüpheli ifadeyi çevresiyle görüp ▶ ile o anı dinleyebilir,
+              doğruysa “İncelendi” ile kapatabilir ya da ✎ ile yalnızca o ifadeyi düzeltebilirsiniz.
+            </Typography>
             <Divider sx={{ mb: 1.5 }} />
             {flags.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                Model şüpheli bir ifade işaretlemedi. Yine de aşağıdaki deşifreyi gözden
+                Model şüpheli bir ifade işaretlemedi. Aşağıdan tüm deşifreyi açıp gözden
                 geçirebilirsiniz.
               </Typography>
             ) : (
-              <Stack spacing={1}>
+              <Stack spacing={1.25}>
                 {flags.map((f, i) => (
-                  <FlagRow
+                  <FlagCard
                     key={i}
                     flag={f}
+                    context={flagContext(f)}
+                    canSeek={hasAudio && typeof f.turn_index === "number"}
                     busy={resolvingFlag === i}
-                    onToggle={(resolved) => onToggleFlag(i, resolved)}
-                    onJump={
+                    onPlay={
                       typeof f.turn_index === "number"
                         ? () => seekToFlag(i, f.turn_index!, f.quote)
+                        : undefined
+                    }
+                    onToggle={(resolved) => onToggleFlag(i, resolved)}
+                    onCorrectPhrase={
+                      typeof f.turn_index === "number"
+                        ? (newPhrase) => correctFlagPhrase(f.turn_index!, f.quote, newPhrase)
                         : undefined
                     }
                   />
@@ -388,13 +453,27 @@ export default function TranscriptReviewPage({ noteId }: Props) {
           </CardContent>
         </Card>
 
-        {/* Raw transcript with inline correction */}
+        {/* Full transcript — collapsed by default; the flags above are the primary
+            fix surface. Expand to read/verify the whole conversation or fix a turn
+            that wasn't flagged, and to re-assign speakers. */}
         <Card variant="outlined">
           <CardContent>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700, flexGrow: 1 }}>
-                Ham deşifre
-              </Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <Button
+                onClick={() => setShowFullTranscript((v) => !v)}
+                startIcon={
+                  <ExpandMoreRoundedIcon
+                    sx={{
+                      transform: showFullTranscript ? "rotate(180deg)" : "none",
+                      transition: "transform .2s",
+                    }}
+                  />
+                }
+                sx={{ fontWeight: 700, flexGrow: 1, justifyContent: "flex-start" }}
+                color="inherit"
+              >
+                Tüm deşifre {showFullTranscript ? "" : `(${turns.length} konuşma)`}
+              </Button>
               <Button
                 size="small"
                 variant="outlined"
@@ -405,36 +484,37 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                 {rediarBusy ? "Atanıyor…" : "Konuşmacıları yeniden ata"}
               </Button>
             </Stack>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
-              İşaretli ifadeler sarı ile vurgulanır. Herhangi bir kelimeye tıklayarak sesi
-              tam o ana götürebilirsiniz; metni düzeltmek için ✎ simgesine dokunun. Konuşmacılar
-              karıştıysa, konuşma akışına göre (soru/cevap) yeniden atamayı deneyin.
-            </Typography>
-            <Divider sx={{ mb: 1.5 }} />
-            <Stack spacing={0.5}>
-              {turns.map((turn, i) => (
-                <TurnRow
-                  key={`${turn.start ?? i}-${i}`}
-                  ref={(el) => {
-                    turnRefs.current[i] = el;
-                  }}
-                  turn={turn}
-                  index={i}
-                  wordTimes={turnWordTimes[i] ?? []}
-                  onWordSeek={hasAudio ? seekToTime : () => {}}
-                  flags={flagsByTurn[i] ?? []}
-                  active={i === activeIdx}
-                  activeFlag={activeFlag}
-                  markRefs={flagMarkRefs}
-                  canSeek={hasAudio && typeof turn.start === "number"}
-                  onSeek={() => seekToTurn(i)}
-                  noteId={noteId}
-                  onCorrected={onCorrected}
-                  onToggleFlag={onToggleFlag}
-                  resolvingFlag={resolvingFlag}
-                />
-              ))}
-            </Stack>
+            <Collapse in={showFullTranscript} unmountOnExit>
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1, mb: 1.5 }}>
+                İşaretli ifadeler sarı ile vurgulanır. Herhangi bir kelimeye tıklayarak sesi
+                tam o ana götürebilirsiniz; metni düzeltmek için ✎ simgesine dokunun.
+              </Typography>
+              <Divider sx={{ mb: 1.5 }} />
+              <Stack spacing={0.5}>
+                {turns.map((turn, i) => (
+                  <TurnRow
+                    key={`${turn.start ?? i}-${i}`}
+                    ref={(el) => {
+                      turnRefs.current[i] = el;
+                    }}
+                    turn={turn}
+                    index={i}
+                    wordTimes={turnWordTimes[i] ?? []}
+                    onWordSeek={hasAudio ? seekToTime : () => {}}
+                    flags={flagsByTurn[i] ?? []}
+                    active={i === activeIdx}
+                    activeFlag={activeFlag}
+                    markRefs={flagMarkRefs}
+                    canSeek={hasAudio && typeof turn.start === "number"}
+                    onSeek={() => seekToTurn(i)}
+                    noteId={noteId}
+                    onCorrected={onCorrected}
+                    onToggleFlag={onToggleFlag}
+                    resolvingFlag={resolvingFlag}
+                  />
+                ))}
+              </Stack>
+            </Collapse>
           </CardContent>
         </Card>
       </Stack>
@@ -450,93 +530,178 @@ export default function TranscriptReviewPage({ noteId }: Props) {
   );
 }
 
-// --- A single flag in the summary list -------------------------------------
+// --- A single flag as a self-contained review+fix card ----------------------
+// The primary fix surface (the full transcript is collapsed below). Shows the
+// suspect phrase IN CONTEXT, plays its exact audio moment, and lets the doctor
+// either acknowledge it (transcript already correct) or fix just that phrase.
 
-function FlagRow({
+function FlagCard({
   flag,
-  onJump,
-  onToggle,
+  context,
+  canSeek,
   busy,
+  onPlay,
+  onToggle,
+  onCorrectPhrase,
 }: {
   flag: ReviewFlag;
-  onJump?: () => void;
-  onToggle?: (resolved: boolean) => void;
+  context: { before: string; quote: string; after: string } | null;
+  canSeek?: boolean;
   busy?: boolean;
+  onPlay?: () => void;
+  onToggle?: (resolved: boolean) => void;
+  onCorrectPhrase?: (newPhrase: string) => Promise<boolean>;
 }) {
   const cat = flag.category ?? "diğer";
-  // "acknowledged" = reviewed, transcript already correct; "corrected" = the turn
-  // text was edited (that path owns its own undo via re-editing the turn).
   const acknowledged = flag.resolved && flag.resolution !== "corrected";
+  const corrected = flag.resolved && flag.resolution === "corrected";
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(context?.quote ?? flag.quote ?? "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const startEdit = () => {
+    setDraft(context?.quote ?? flag.quote ?? "");
+    setErr(null);
+    setEditing(true);
+  };
+  const saveEdit = async () => {
+    if (!onCorrectPhrase) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const ok = await onCorrectPhrase(draft);
+      if (ok) setEditing(false);
+      else setErr("Bu ifade metinde tam bulunamadı; tüm deşifreden düzeltin.");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Kaydedilemedi");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Stack
-      direction="row"
-      spacing={1}
+    <Box
       sx={{
-        alignItems: "center",
-        p: 1,
-        borderRadius: 1.5,
-        bgcolor: flag.resolved ? "action.hover" : "transparent",
-        opacity: flag.resolved ? 0.7 : 1,
+        p: 1.25,
+        borderRadius: 2,
+        border: "1px solid",
+        borderColor: flag.resolved ? "success.light" : "warning.light",
+        bgcolor: flag.resolved ? "rgba(76,175,80,0.06)" : "rgba(255,167,38,0.07)",
       }}
     >
-      <Chip size="small" label={CATEGORY_LABELS[cat] ?? cat} variant="outlined" />
-      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-        <Typography
-          variant="body2"
-          sx={{ fontWeight: 600, textDecoration: flag.resolved ? "line-through" : "none" }}
-        >
-          "{flag.quote}"
-        </Typography>
-        {flag.reason ? (
-          <Typography variant="caption" color="text.secondary">
-            {flag.reason}
-          </Typography>
-        ) : null}
-      </Box>
-      {onJump && !flag.resolved ? (
-        <Tooltip title="Sesde bu ana git">
-          <IconButton size="small" onClick={onJump} color="primary">
-            <PlayArrowRoundedIcon />
-          </IconButton>
-        </Tooltip>
-      ) : null}
-      {flag.resolved ? (
-        <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-          <CheckCircleRoundedIcon color="success" fontSize="small" />
-          {acknowledged && onToggle ? (
-            <Tooltip title="İncelendi işaretini geri al">
-              <span>
-                <IconButton
+      <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+        <Chip size="small" label={CATEGORY_LABELS[cat] ?? cat} variant="outlined" sx={{ mt: 0.25 }} />
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          {/* the suspect phrase in its surrounding context */}
+          {context ? (
+            <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
+              <span style={{ color: "rgba(0,0,0,0.55)" }}>{context.before}</span>
+              <Box
+                component="mark"
+                sx={{
+                  bgcolor: flag.resolved ? "rgba(76,175,80,0.35)" : "rgba(255,167,38,0.55)",
+                  borderRadius: 0.5,
+                  px: 0.25,
+                  fontWeight: 700,
+                  textDecoration: corrected ? "line-through" : "none",
+                }}
+              >
+                {context.quote}
+              </Box>
+              <span style={{ color: "rgba(0,0,0,0.55)" }}>{context.after}</span>
+            </Typography>
+          ) : (
+            <Typography
+              variant="body2"
+              sx={{ fontWeight: 700, textDecoration: flag.resolved ? "line-through" : "none" }}
+            >
+              "{flag.quote}"
+            </Typography>
+          )}
+          {flag.reason ? (
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+              {flag.reason}
+            </Typography>
+          ) : null}
+
+          {/* inline phrase editor */}
+          {editing ? (
+            <Stack spacing={1} sx={{ mt: 1 }}>
+              <TextField
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                size="small"
+                fullWidth
+                autoFocus
+                multiline
+                disabled={saving}
+                label="Doğru ifade"
+              />
+              {err && <Alert severity="error">{err}</Alert>}
+              <Stack direction="row" spacing={1}>
+                <Button size="small" variant="contained" onClick={saveEdit} disabled={saving}>
+                  {saving ? "Kaydediliyor…" : "Kaydet"}
+                </Button>
+                <Button size="small" onClick={() => setEditing(false)} disabled={saving}>
+                  Vazgeç
+                </Button>
+              </Stack>
+            </Stack>
+          ) : null}
+        </Box>
+
+        {/* actions */}
+        {!editing && (
+          <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", flexShrink: 0 }}>
+            {onPlay && canSeek ? (
+              <Tooltip title="Sesde bu ana git">
+                <IconButton size="small" onClick={onPlay} color="primary">
+                  <PlayArrowRoundedIcon />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            {!flag.resolved && onCorrectPhrase ? (
+              <Tooltip title="Bu ifadeyi düzelt">
+                <IconButton size="small" onClick={startEdit}>
+                  <EditRoundedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            {flag.resolved ? (
+              <>
+                <Tooltip title={corrected ? "Düzeltildi" : "İncelendi"}>
+                  <CheckCircleRoundedIcon color="success" fontSize="small" />
+                </Tooltip>
+                {acknowledged && onToggle ? (
+                  <Tooltip title="İncelendi işaretini geri al">
+                    <span>
+                      <IconButton size="small" onClick={() => onToggle(false)} disabled={busy}>
+                        {busy ? <CircularProgress size={16} /> : <UndoRoundedIcon fontSize="small" />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                ) : null}
+              </>
+            ) : onToggle ? (
+              <Tooltip title="Deşifre doğru — incelendi olarak işaretle">
+                <Button
                   size="small"
-                  onClick={() => onToggle(false)}
+                  variant="outlined"
+                  color="success"
+                  startIcon={busy ? <CircularProgress size={14} /> : <DoneRoundedIcon />}
+                  onClick={() => onToggle(true)}
                   disabled={busy}
                 >
-                  {busy ? <CircularProgress size={16} /> : <UndoRoundedIcon fontSize="small" />}
-                </IconButton>
-              </span>
-            </Tooltip>
-          ) : null}
-        </Stack>
-      ) : onToggle ? (
-        <Tooltip title="Deşifre doğru — incelendi olarak işaretle">
-          <Button
-            size="small"
-            variant="outlined"
-            color="success"
-            startIcon={busy ? <CircularProgress size={14} /> : <DoneRoundedIcon />}
-            onClick={() => onToggle(true)}
-            disabled={busy}
-            sx={{ flexShrink: 0 }}
-          >
-            İncelendi
-          </Button>
-        </Tooltip>
-      ) : (
-        <Tooltip title="Bu ifade deşifrede tam olarak bulunamadı">
-          <Chip size="small" label="konum yok" variant="outlined" />
-        </Tooltip>
-      )}
-    </Stack>
+                  İncelendi
+                </Button>
+              </Tooltip>
+            ) : null}
+          </Stack>
+        )}
+      </Stack>
+    </Box>
   );
 }
 
@@ -551,11 +716,18 @@ interface TurnFlag {
 // Tolerant like the backend's fuzzy match: case-insensitive (Turkish İ/I aware) and
 // whitespace-collapsed, so "Marmaray'ın elbisesi" is found even if spacing differs.
 // Returns the [start,end) char range in the ORIGINAL text, or null if not found.
+//
+// The LLM's quote is often a PARAPHRASE, not a verbatim copy (e.g. it wrote
+// "enzimleri" where the transcript says "enzimler"), so an exact/whitespace-flexible
+// match can miss even though the backend located the turn via token overlap. When
+// the exact match fails we fall back to the best contiguous WORD-SPAN whose folded
+// tokens overlap the quote's — mirroring review.locate_flags server-side — so we
+// return the ACTUAL transcript substring (which is what the editor must replace).
 function findQuoteRange(text: string, quote: string): [number, number] | null {
   if (!text || !quote) return null;
   const trLower = (s: string) =>
     s.replace(/İ/g, "i").replace(/I/g, "ı").toLocaleLowerCase("tr");
-  // Build a whitespace-flexible, escaped regex from the folded quote.
+  // 1) exact, whitespace-flexible match on the raw quote.
   const esc = trLower(quote.trim())
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/\s+/g, "\\s+");
@@ -563,8 +735,38 @@ function findQuoteRange(text: string, quote: string): [number, number] | null {
     const m = new RegExp(esc).exec(trLower(text));
     if (m && m.index >= 0) return [m.index, m.index + m[0].length];
   } catch {
-    /* bad regex → no highlight */
+    /* bad regex → fall through to fuzzy */
   }
+  // 2) fuzzy fallback: pick the contiguous run of turn words that best covers the
+  //    quote's word set. Turkish-fold each word for comparison (İ/I + strip
+  //    non-word chars) but index into the ORIGINAL text char offsets.
+  const fold = (s: string) => trLower(s).replace(/[^\p{L}\p{N}]/gu, "");
+  const qTokens = new Set(quote.split(/\s+/).map(fold).filter(Boolean));
+  if (qTokens.size === 0) return null;
+  // tokenize the turn into [start,end,folded] word spans
+  const words: { start: number; end: number; f: string }[] = [];
+  const re = /\S+/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = re.exec(text)) !== null) {
+    const f = fold(mm[0]);
+    if (f) words.push({ start: mm.index, end: mm.index + mm[0].length, f });
+  }
+  if (words.length === 0) return null;
+  const target = qTokens.size; // window ~ number of quote words
+  let best: { start: number; end: number; score: number } | null = null;
+  for (let i = 0; i < words.length; i++) {
+    for (let len = 1; len <= target + 2 && i + len <= words.length; len++) {
+      const span = words.slice(i, i + len);
+      const hits = span.filter((w) => qTokens.has(w.f)).length;
+      // score: fraction of quote tokens covered, lightly penalizing extra words
+      const score = hits / qTokens.size - (len - hits) * 0.05;
+      if (hits > 0 && (!best || score > best.score)) {
+        best = { start: span[0].start, end: span[span.length - 1].end, score };
+      }
+    }
+  }
+  // Require covering at least half the quote's tokens (same 0.5 bar as the backend).
+  if (best && best.score >= 0.5) return [best.start, best.end];
   return null;
 }
 
