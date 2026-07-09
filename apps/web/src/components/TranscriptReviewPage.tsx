@@ -628,6 +628,16 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
       const before = draft.slice(0, r[0]);
       const approxLine = before.split("\n").length;
       el.scrollTop = Math.max(0, (approxLine - 3) * 20);
+      // Also PLAY the audio at that phrase's moment — you're fixing it, so you
+      // want to hear it (word-precise via the turn's word times; ADR-0030).
+      let pos = 0;
+      for (const { tok, start } of wordTimes) {
+        if (pos + tok.length > r[0]) {
+          if (typeof start === "number") onWordSeek(start);
+          break;
+        }
+        pos += tok.length;
+      }
     }
   };
 
@@ -727,11 +737,11 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
                 }}
               >
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
-                  İşaretli ifadeler — düzeltmek istediğinize dokunun (metinde seçilir):
+                  İşaretli ifadeler — dokunun: metinde seçilir ve o an sesde çalınır:
                 </Typography>
                 <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", gap: 0.5 }}>
                   {flags.map(({ flag: f }, k) => (
-                    <Tooltip key={k} title={f.reason || "İncele"}>
+                    <Tooltip key={k} title={f.reason || "Seç ve sesde dinle"}>
                       <Chip
                         size="small"
                         icon={<WarningAmberRoundedIcon />}
