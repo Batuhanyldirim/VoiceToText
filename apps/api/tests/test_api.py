@@ -27,6 +27,49 @@ def test_health(client):
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
 
+# --- STT-review flags + transcript-turn correction (ADR-0029) --------------
+
+def _seed_with_turns(client, **extra):
+    import json
+    turns = [
+        {"speaker": "Speaker 1", "text": "Şikayetiniz?", "start": 0.0, "end": 2.0},
+        {"speaker": "Speaker 2", "text": "Günde 500 mg parasetamol.", "start": 2.0, "end": 6.0},
+    ]
+    flags = [{"quote": "500 mg parasetamol", "reason": "doz", "category": "doz",
+              "turn_index": 1, "start": 2.0, "end": 6.0, "matched": True}]
+    _seed_note(client, transcript_json=json.dumps(turns, ensure_ascii=False),
+               review_flags_json=json.dumps(flags, ensure_ascii=False), **extra)
+
+
+def test_get_note_returns_review_flags_and_turns(client):
+    _seed_with_turns(client)
+    body = client.get("/notes/n1").json()
+    assert body["review_flags"][0]["turn_index"] == 1
+    assert body["turns"][1]["start"] == 2.0
+
+
+def test_patch_turn_corrects_text_and_resolves_flag(client):
+    _seed_with_turns(client)
+    r = client.patch("/notes/n1/turns", json={"turn_index": 1, "text": "Günde 50 mg parasetamol."})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["turns"][1]["text"] == "Günde 50 mg parasetamol."
+    assert body["turns"][1]["corrected"] is True
+    assert body["review_flags"][0]["resolved"] is True
+    # Note body must be untouched by a transcript correction.
+    assert body["ai_note"] == "# Not\ngövde"
+    assert body["edited"] is False
+
+
+def test_patch_turn_bad_index_404(client):
+    _seed_with_turns(client)
+    assert client.patch("/notes/n1/turns", json={"turn_index": 9, "text": "x"}).status_code == 404
+
+
+def test_patch_turn_unknown_note_404(client):
+    assert client.patch("/notes/nope/turns", json={"turn_index": 0, "text": "x"}).status_code == 404
+
+
 # --- note edit / finalize lifecycle ----------------------------------------
 
 def test_get_note_serves_effective_body(client):

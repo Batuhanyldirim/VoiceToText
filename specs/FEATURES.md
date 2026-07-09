@@ -101,6 +101,14 @@ The success gate: a transcript with **≥ 2 distinct speakers**. CPU-only by des
   panel: the source turns with timestamps, and (when the recording is kept) a
   player where **clicking a turn plays that moment** — verify an ambiguous passage
   against the original audio. *(REQ-143–146; ADR-0019)*
+- **STT-error review & correction** — the note flags likely mistranscriptions
+  (misheard drug/dose/negation/name) as **structured, located** review flags (same
+  single generation call, no extra AI cost). A dedicated **review page**
+  (`/notes/:id/review`) highlights the flagged turns over the raw transcript,
+  **plays the flagged audio moment** on click, and lets the doctor **correct the
+  transcript turn** against what was actually said — resolving the flag and
+  capturing a human-verified correction (a future training label). Corrections
+  touch only the transcript, never the note body. *(REQ-171–175; ADR-0029)*
 - **Export** — **PDF** (browser print), **EHR için kopyala** (clean plain text),
   Markdown copy, `.md` download. *(REQ-142)*
 

@@ -175,17 +175,32 @@ EXTRACTION_MARKER = "<<<SORUN_ILAC_JSON>>>"
 
 
 def split_note_and_lists(full: str) -> tuple[str, list, list]:
-    """Split a generation that ends with EXTRACTION_MARKER + a JSON block into
-    (note_text, problems, medications). If the marker/JSON is absent or unparseable,
-    the note is the whole text and the lists are empty (fail-closed) — so a model
-    that ignores the JSON instruction still yields a perfect note."""
+    """Split a generation that ends with trailing machine-readable blocks into
+    (note_text, problems, medications). The NOTE is everything before the FIRST
+    trailing marker of any kind (EXTRACTION_MARKER for problems/meds, or the
+    review-flags marker) — so neither JSON block leaks into the note even if the
+    model reorders or omits one. problems/meds are parsed from the EXTRACTION_MARKER
+    block specifically. Fail-closed: no marker → whole text is the note, empty
+    lists (a model that ignores the JSON instruction still yields a perfect note)."""
     if not full:
         return "", [], []
+    # Local import avoids an import cycle (review imports _extract_json_object here).
+    from .review import REVIEW_MARKER
+
+    # Note body ends at the earliest trailing marker of ANY kind.
+    starts = [full.find(m) for m in (EXTRACTION_MARKER, REVIEW_MARKER)]
+    starts = [i for i in starts if i != -1]
+    note = full[:min(starts)].rstrip() if starts else full
+
     idx = full.rfind(EXTRACTION_MARKER)
     if idx == -1:
-        return full, [], []
-    note = full[:idx].rstrip()
+        return note, [], []
     tail = full[idx + len(EXTRACTION_MARKER):]
+    # If the review block follows, cut it off so parse_extraction sees only the
+    # problems/meds JSON.
+    rm = tail.find(REVIEW_MARKER)
+    if rm != -1:
+        tail = tail[:rm]
     problems, medications = parse_extraction(tail)
     return note, problems, medications
 

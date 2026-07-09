@@ -15,6 +15,7 @@ from .generate import EmptyTranscriptError, generate
 from .models import NoteOptions, NoteResult
 from .progress import STAGES, NoteEvent
 from .providers import ProviderError, list_providers
+from .review import locate_flags, parse_review_flags
 from .templates import TEMPLATE_CHOICES
 
 __all__ = [
@@ -30,4 +31,6 @@ __all__ = [
     "ProviderError",
     "EmptyTranscriptError",
     "list_providers",
+    "parse_review_flags",
+    "locate_flags",
 ]

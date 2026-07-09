@@ -470,6 +470,35 @@ verifiable against the recording without leaving the note page. PHI stays local.
   stored source audio, keeping the one-command `rm -rf` cleanup and never
   committing audio (PHI). *(→ ADR-0019, ADR-0003, ADR-0010)*
 
+## STT-error review & transcript correction (→ ADR-0029)
+
+The note already flags likely transcription errors in prose; this makes those flags
+**structured + actionable**: the doctor plays the flagged audio moment and corrects
+the transcript turn against what was actually said.
+
+- **REQ-171** (Event) — WHEN generating a note, THE SYSTEM SHALL emit, in the SAME
+  call (no extra request), a structured list of **STT-review flags**
+  `{quote (verbatim from transcript), reason, category}` for likely
+  mistranscriptions, behind a second sentinel after the problems/meds block. It
+  SHALL fail closed to an empty list and SHALL never let either JSON block leak into
+  the note body. *(→ ADR-0029, ADR-0023)*
+- **REQ-172** (Event) — WHEN flags are produced, THE SYSTEM SHALL locate each to a
+  transcript turn by fuzzy-matching its quote (Turkish-folded), attaching
+  `{turn_index, start, end}` for audio seek, and SHALL keep an unlocatable flag
+  (marked `matched:false`) rather than dropping or fabricating a match. *(→ ADR-0029)*
+- **REQ-173** (Ubiquitous) — THE SYSTEM SHALL persist located flags with the note
+  (`review_flags_json`) and return them on `GET /notes/{id}`. *(→ ADR-0029, ADR-0010)*
+- **REQ-174** (Event) — WHEN a clinician corrects a transcript turn
+  (`PATCH /notes/{id}/turns {turn_index, text}`), THE SYSTEM SHALL update ONLY that
+  turn's text (marking it `corrected`), resolve any review flag anchored to it, and
+  SHALL NOT modify the note body (the AI original + edit overlay stay independent —
+  ADR-0015). *(→ ADR-0029)*
+- **REQ-175** (State) — WHILE viewing a note with review flags, THE web UI SHALL
+  offer a **review page** (`/notes/:id/review`) that highlights flagged turns over
+  the raw transcript, plays the flagged moment on click (reusing the range-enabled
+  `/notes/{id}/audio`), and allows inline correction; the note viewer SHALL show an
+  entry banner while open flags remain. *(→ ADR-0029, ADR-0019)*
+
 ## Home dashboard & navigation
 
 A landing page ("Bugün") and clearly-visible primary navigation. *(→ ADR-0025,

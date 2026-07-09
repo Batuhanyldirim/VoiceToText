@@ -58,6 +58,11 @@ class NoteResult:
     # so extraction costs no extra request. Empty when not requested/unparseable.
     problems: list = field(default_factory=list)
     medications: list = field(default_factory=list)
+    # Structured STT-review flags extracted in the SAME call (ADR-0029): the
+    # machine-readable form of the note's "Klinik İnceleme Gerekli" section —
+    # [{quote, reason, category}] of suspect (likely mistranscribed) spans. The
+    # API locates each against the transcript turns for audio seek before saving.
+    review_flags: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -69,4 +74,5 @@ class NoteResult:
             "usage": self.usage,
             "problems": self.problems,
             "medications": self.medications,
+            "review_flags": self.review_flags,
         }

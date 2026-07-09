@@ -53,8 +53,10 @@ import type {
   NoteStage,
   NoteVersion,
   Problem,
+  ReviewFlag,
   Turn,
 } from "../types";
+import { navigate } from "../utils/router";
 import SourceTranscript from "./SourceTranscript";
 import {
   ApiError,
@@ -151,6 +153,7 @@ export default function NoteViewer({
   // Source transcript turns + whether the recording is available (ADR-0019).
   const [turns, setTurns] = useState<Turn[]>([]);
   const [hasAudio, setHasAudio] = useState(false);
+  const [reviewFlags, setReviewFlags] = useState<ReviewFlag[]>([]);
   // Encounter metadata (ADR-0022).
   const [visitType, setVisitType] = useState<string | null>(null);
   const [chiefComplaint, setChiefComplaint] = useState<string | null>(null);
@@ -211,6 +214,7 @@ export default function NoteViewer({
       setPatientName(job.patient_name ?? null);
       if (Array.isArray(job.turns)) setTurns(job.turns);
       setHasAudio(Boolean(job.has_audio));
+      if (Array.isArray(job.review_flags)) setReviewFlags(job.review_flags);
       setVisitType(job.visit_type ?? null);
       setChiefComplaint(job.chief_complaint ?? null);
       if (Array.isArray(job.problems)) setProblems(job.problems);
@@ -1044,6 +1048,32 @@ export default function NoteViewer({
               </CardContent>
             </Card>
           )}
+
+          {/* STT-error review entry (ADR-0029): when the note flagged likely
+              mistranscriptions, offer the raw-transcript review + correction page
+              (play the flagged moment, fix the text against the audio). */}
+          {!editing && turns.length > 0 && reviewFlags.length > 0 && (() => {
+            const open = reviewFlags.filter((f) => !f.resolved).length;
+            return (
+              <Alert
+                severity={open ? "warning" : "success"}
+                icon={<WarningAmberRoundedIcon />}
+                action={
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => navigate(`/notes/${encodeURIComponent(noteId)}/review`)}
+                  >
+                    Deşifreyi incele
+                  </Button>
+                }
+              >
+                {open
+                  ? `${open} olası konuşma-tanıma hatası işaretlendi — sesle karşılaştırıp düzeltin.`
+                  : "Tüm işaretli ifadeler incelendi."}
+              </Alert>
+            );
+          })()}
 
           {/* Source transcript with click-to-seek audio (ADR-0019). Shown when
               the note carries turns; the player appears only if audio exists. */}

@@ -26,5 +26,5 @@ dev = ["pytest>=8.0"]
 #  - packages/eval/tests: the Turkish normalizer + WER/CER/cpWER scorers (pure
 #    Python; jiwer + pyannote.metrics only, no torch/whisperx).
 [tool.pytest.ini_options]
-testpaths = ["apps/api/tests", "packages/eval/tests", "packages/core/tests"]
+testpaths = ["apps/api/tests", "packages/eval/tests", "packages/core/tests", "packages/note-core/tests"]
 addopts = "-q"

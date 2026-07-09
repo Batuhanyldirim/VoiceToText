@@ -5,6 +5,7 @@ import WorkspaceView from "./components/WorkspaceView";
 import HomePage from "./components/HomePage";
 import PatientListPage from "./components/PatientListPage";
 import PatientPage from "./components/PatientPage";
+import TranscriptReviewPage from "./components/TranscriptReviewPage";
 import AppShell from "./components/AppShell";
 import { usePath, matchRoute } from "./utils/router";
 
@@ -18,8 +19,16 @@ export default function App() {
 
   let content;
   const patientMatch = matchRoute("/patients/:id", path);
+  const reviewMatch = matchRoute("/notes/:id/review", path);
   if (path === "/yeni") {
     content = <WorkspaceView />;
+  } else if (reviewMatch) {
+    // Raw-transcript review + STT-error correction page (ADR-0029).
+    content = (
+      <AppShell>
+        <TranscriptReviewPage noteId={reviewMatch.id} />
+      </AppShell>
+    );
   } else if (path === "/patients") {
     content = (
       <AppShell>

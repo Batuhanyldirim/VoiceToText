@@ -10,6 +10,71 @@ from stt_api.store import NoteLockedError, NoteStore, SavedNote
 from conftest import make_saved_note
 
 
+# --- STT-review flags + transcript-turn correction (ADR-0029) --------------
+
+import json
+
+
+def _turns():
+    return [
+        {"speaker": "Speaker 1", "text": "Şikayetiniz nedir?", "start": 0.0, "end": 2.0},
+        {"speaker": "Speaker 2", "text": "Günde 500 mg parasetamol.", "start": 2.0, "end": 6.0},
+    ]
+
+
+def test_review_flags_round_trip(store):
+    make_saved_note(store)
+    flags = [{"quote": "500 mg parasetamol", "reason": "doz", "category": "doz",
+              "turn_index": 1, "start": 2.0, "end": 6.0, "matched": True}]
+    store.set_review_flags("n1", flags)
+    n = store.get("n1")
+    assert n.review_flags == flags
+    assert n.review_flags[0]["turn_index"] == 1
+
+
+def test_review_flags_default_empty(store):
+    make_saved_note(store)
+    assert store.get("n1").review_flags == []
+
+
+def test_correct_turn_updates_text_and_marks_corrected(store):
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    updated = store.update_transcript_turn("n1", 1, "Günde 50 mg parasetamol.")
+    assert updated is not None
+    turns = store.get("n1").turns
+    assert turns[1]["text"] == "Günde 50 mg parasetamol."
+    assert turns[1]["corrected"] is True
+    assert turns[0].get("corrected") is None  # other turns untouched
+
+
+def test_correct_turn_resolves_matching_flag(store):
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    store.set_review_flags("n1", [{"quote": "500 mg parasetamol", "turn_index": 1,
+                                   "category": "doz", "matched": True}])
+    store.update_transcript_turn("n1", 1, "Günde 50 mg parasetamol.")
+    flags = store.get("n1").review_flags
+    assert flags[0]["resolved"] is True
+
+
+def test_correct_turn_does_not_touch_note_body(store):
+    make_saved_note(store, note="AI ORIGINAL NOTE",
+                    transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    store.update_transcript_turn("n1", 0, "düzeltilmiş")
+    n = store.get("n1")
+    assert n.note == "AI ORIGINAL NOTE"     # note body untouched
+    assert n.edited is False                 # no edit overlay created
+
+
+def test_correct_turn_bad_index_returns_none(store):
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    assert store.update_transcript_turn("n1", 9, "x") is None
+    assert store.update_transcript_turn("n1", -1, "x") is None
+
+
+def test_correct_turn_missing_note_returns_none(store):
+    assert store.update_transcript_turn("nope", 0, "x") is None
+
+
 # --- note edit / finalize lifecycle (ADR-0015) -----------------------------
 
 def test_edit_is_an_overlay_ai_original_preserved(store):

@@ -69,6 +69,10 @@ class SavedNote:
     # Extracted structured lists as JSON strings (ADR-0023). NULL = not extracted.
     problems_json: Optional[str] = None
     medications_json: Optional[str] = None
+    # Structured STT-review flags as a JSON string (ADR-0029): the located
+    # [{quote, reason, category, turn_index, start, end, matched, resolved?}] of
+    # suspect (likely mistranscribed) spans. NULL = not extracted / none.
+    review_flags_json: Optional[str] = None
 
     @property
     def effective_note(self) -> str:
@@ -99,6 +103,11 @@ class SavedNote:
         """Whether problem/medication extraction has been run (either list stored)."""
         return self.problems_json is not None or self.medications_json is not None
 
+    @property
+    def review_flags(self) -> list:
+        """Located STT-review flags (parsed from review_flags_json), or [] (ADR-0029)."""
+        return _parse_json_list(self.review_flags_json)
+
     def summary(self) -> dict:
         """List-view shape (no heavy transcript/note bodies)."""
         return {
@@ -127,6 +136,7 @@ class SavedNote:
         d["note"] = self.effective_note
         d["ai_note"] = self.note
         d["edited_note"] = self.edited_note
+        d["review_flags"] = self.review_flags
         return d
 
 
@@ -222,6 +232,9 @@ class NoteStore:
                 conn.execute("ALTER TABLE notes ADD COLUMN problems_json TEXT")
             if "medications_json" not in cols:
                 conn.execute("ALTER TABLE notes ADD COLUMN medications_json TEXT")
+            # Structured STT-review flags (ADR-0029), located JSON string.
+            if "review_flags_json" not in cols:
+                conn.execute("ALTER TABLE notes ADD COLUMN review_flags_json TEXT")
             # Version history (ADR-0020): a snapshot of each prior note body.
             conn.execute(
                 """
@@ -258,15 +271,16 @@ class NoteStore:
                     (id, created_at, title, source_name, provider, model, template,
                      transcript, note, transcribe_seconds, note_seconds,
                      edited_note, status, finalized_at, patient_id, transcript_json,
-                     visit_type, chief_complaint, problems_json, medications_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     visit_type, chief_complaint, problems_json, medications_json,
+                     review_flags_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (note.id, note.created_at, note.title, note.source_name,
                  note.provider, note.model, note.template, note.transcript, note.note,
                  note.transcribe_seconds, note.note_seconds,
                  note.edited_note, note.status, note.finalized_at, note.patient_id,
                  note.transcript_json, note.visit_type, note.chief_complaint,
-                 note.problems_json, note.medications_json),
+                 note.problems_json, note.medications_json, note.review_flags_json),
             )
 
     def list(self, patient_id: Optional[str] = None, q: Optional[str] = None) -> list[dict]:
@@ -431,6 +445,63 @@ class NoteStore:
             )
         note.problems_json = pj
         note.medications_json = mj
+        return note
+
+    def set_review_flags(self, note_id: str, flags: list) -> Optional[SavedNote]:
+        """Persist located STT-review flags on a note (ADR-0029). Overwrites any
+        prior flags. Returns None if the note is missing."""
+        import json
+        note = self.get(note_id)
+        if not note:
+            return None
+        fj = json.dumps(flags or [], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET review_flags_json = ? WHERE id = ?", (fj, note_id)
+            )
+        note.review_flags_json = fj
+        return note
+
+    def update_transcript_turn(self, note_id: str, turn_index: int, text: str
+                               ) -> Optional[SavedNote]:
+        """Correct a single transcript turn's text in place (ADR-0029) and, if a
+        review flag pointed at that turn, mark it resolved so the UI can show it
+        was verified. Corrects only the TURN text (the transcript), never the note
+        body — the note stays the AI original + the clinician's separate note
+        overlay (ADR-0015). Returns None if the note/turn is missing.
+
+        This is how a doctor manually fixes an STT error against the audio: the
+        corrected transcript is what feeds re-extraction and any future training
+        corpus (a real, human-verified label)."""
+        import json
+        note = self.get(note_id)
+        if not note:
+            return None
+        turns = note.turns
+        if turn_index < 0 or turn_index >= len(turns):
+            return None
+        turns[turn_index] = {**turns[turn_index], "text": text, "corrected": True}
+        tj = json.dumps(turns, ensure_ascii=False)
+        # Mark any flag anchored to this turn as resolved (kept, not deleted, so the
+        # doctor still sees what was reviewed).
+        flags = note.review_flags
+        changed = False
+        for f in flags:
+            if f.get("turn_index") == turn_index and not f.get("resolved"):
+                f["resolved"] = True
+                changed = True
+        fj = json.dumps(flags, ensure_ascii=False) if changed else None
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET transcript_json = ? WHERE id = ?", (tj, note_id)
+            )
+            if fj is not None:
+                conn.execute(
+                    "UPDATE notes SET review_flags_json = ? WHERE id = ?", (fj, note_id)
+                )
+        note.transcript_json = tj
+        if fj is not None:
+            note.review_flags_json = fj
         return note
 
     # --- version history (ADR-0020) ------------------------------------------

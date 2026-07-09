@@ -16,6 +16,8 @@ export interface Turn {
   text: string;
   start: number;
   end: number;
+  /** True once a clinician manually corrected this turn against the audio (ADR-0029). */
+  corrected?: boolean;
 }
 
 /** Word/segment level payload from the backend. Shape is loose on purpose. */
@@ -307,6 +309,8 @@ export interface Note {
   note_seconds?: number | null;
   started_at?: number | null;
   created_at?: string | null;
+  title?: string | null;
+  source_name?: string | null;
   // Edit/finalize lifecycle (present once the note is persisted; ADR-0015).
   ai_note?: string | null;        // the AI's original output (for revert/compare)
   edited_note?: string | null;    // the clinician overlay (null = untouched)
@@ -325,6 +329,21 @@ export interface Note {
   problems?: Problem[];
   medications?: Medication[];
   extracted?: boolean;
+  // Structured STT-review flags, located to turns for audio seek (ADR-0029).
+  review_flags?: ReviewFlag[];
+}
+
+/** A located STT-review flag: a likely-mistranscribed span the doctor should
+ * verify against the audio (ADR-0029). `turn_index`/`start` present when located. */
+export interface ReviewFlag {
+  quote: string;
+  reason?: string;
+  category?: string;
+  turn_index?: number | null;
+  start?: number | null;
+  end?: number | null;
+  matched?: boolean;
+  resolved?: boolean;
 }
 
 /** An extracted problem-list entry (ADR-0023). */

@@ -13,6 +13,7 @@ from .models import NoteOptions, NoteResult
 from .progress import NoteCallback, NoteEvent, noop
 from .prompt import CLINICAL_SYSTEM_PROMPT, build_user_prompt
 from .providers import ProviderError, get_provider
+from .review import REVIEW_MARKER, parse_review_flags
 from .templates import resolve_template_text
 
 
@@ -55,31 +56,39 @@ def generate(
 
     progress(NoteEvent(stage="start", message=f"generating note via {provider.name}"))
     pieces: list[str] = []
-    # The model appends `EXTRACTION_MARKER` + a JSON block after the note (ADR-0023)
-    # so problems/medications come from THIS single call — no second request. We
-    # must NOT stream that marker/JSON to the client (they'd see raw JSON appear),
-    # so we hold back a tail buffer: emit text as deltas only up to the point where
-    # a marker prefix could begin. Once the marker appears, we stop emitting and
-    # just accumulate the rest for parsing.
+    # The model appends TWO trailing machine-readable blocks after the note, each
+    # behind a sentinel: EXTRACTION_MARKER (problems/meds, ADR-0023) then
+    # REVIEW_MARKER (STT-review flags, ADR-0029). Both come from THIS single call —
+    # no extra request. We must NOT stream either marker/JSON to the client, so we
+    # stop emitting at whichever marker appears FIRST (the note is everything before
+    # it) and just accumulate the rest for parsing. Until then we hold back a tail
+    # buffer in case a marker is split across streamed chunks.
     emitted = 0            # chars of `full` already sent as deltas
     marker_seen = False
     full = ""
-    hold = len(EXTRACTION_MARKER)
+    hold = max(len(EXTRACTION_MARKER), len(REVIEW_MARKER))
+
+    def _first_marker_index(text: str) -> int:
+        idxs = [text.find(m) for m in (EXTRACTION_MARKER, REVIEW_MARKER)]
+        idxs = [i for i in idxs if i != -1]
+        return min(idxs) if idxs else -1
+
     try:
         for delta in provider.stream(system, user, opts, result):
             pieces.append(delta)
             full += delta
-            if not marker_seen and EXTRACTION_MARKER in full:
-                marker_seen = True
-                # Emit any note text before the marker that we hadn't sent yet.
-                cut = full.index(EXTRACTION_MARKER)
-                if cut > emitted:
-                    progress(NoteEvent(stage="generating", delta=full[emitted:cut]))
-                    emitted = cut
+            if not marker_seen:
+                cut = _first_marker_index(full)
+                if cut != -1:
+                    marker_seen = True
+                    # Emit any note text before the first marker not yet sent.
+                    if cut > emitted:
+                        progress(NoteEvent(stage="generating", delta=full[emitted:cut]))
+                        emitted = cut
             if marker_seen:
                 continue
             # Safe-to-emit boundary: keep back the last `hold` chars in case they
-            # are the start of the marker split across chunks.
+            # are the start of a marker split across chunks.
             safe = len(full) - hold
             if safe > emitted:
                 progress(NoteEvent(stage="generating", delta=full[emitted:safe]))
@@ -92,11 +101,13 @@ def generate(
     if not marker_seen and len(full) > emitted:
         progress(NoteEvent(stage="generating", delta=full[emitted:]))
 
-    # Split the note from the trailing JSON block (fail-closed: no marker → whole
-    # text is the note, empty lists).
+    # Split the note from the trailing JSON blocks (fail-closed: no marker → whole
+    # text is the note, empty lists). split_note_and_lists splits on the FIRST
+    # marker, so the note never includes either JSON block.
     note_text, problems, medications = split_note_and_lists(full)
     result.note = note_text
     result.problems = problems
     result.medications = medications
+    result.review_flags = parse_review_flags(full)
     progress(NoteEvent(stage="done", message="note complete"))
     return result

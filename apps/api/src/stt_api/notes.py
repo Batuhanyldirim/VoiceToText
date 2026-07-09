@@ -204,14 +204,19 @@ class NoteJobManager:
             job.note_seconds = round(time.monotonic() - t0, 1)
             # Set the result BEFORE emitting "done" (same large-input race fix as
             # transcription): a client reacting to "done" must find it ready.
+            # Locate STT-review flags against the transcript turns for audio seek
+            # (ADR-0029) — pure, best-effort; a failure just yields unlocated flags.
+            located_flags = self._locate_flags(job, result.review_flags)
             job.result = result.to_dict()
+            job.result["review_flags"] = located_flags  # expose LOCATED flags to clients
             job.note_text = result.note
             job.status = "done"
             # Persist the completed note to durable history. A store failure must
             # NOT crash the job (the in-memory result is still served), so guard.
-            # Problems/medications came from the SAME generation call (ADR-0023).
+            # Problems/medications AND review flags came from the SAME call (ADR-0023/0029).
             self._persist(job, result.note,
-                          problems=result.problems, medications=result.medications)
+                          problems=result.problems, medications=result.medications,
+                          review_flags=located_flags)
             self._emit_terminal(job, NoteEvent(stage="done", message="note complete"))
             log.info("note %s DONE chars=%d in %.1fs", job.id,
                      len(result.note), job.note_seconds)
@@ -222,11 +227,28 @@ class NoteJobManager:
             log.exception("note %s ERROR after %.1fs: %s", job.id,
                           time.monotonic() - t0, job.error)
 
+    def _locate_flags(self, job: NoteJob, flags: list) -> list:
+        """Attach {turn_index,start,end} to each STT-review flag by matching its
+        quote to the transcript turns (ADR-0029). Pure + best-effort — never raises;
+        returns the flags unlocated on any problem."""
+        if not flags:
+            return []
+        try:
+            import json as _json
+            from note_core.review import locate_flags
+            turns = _json.loads(job.transcript_json) if job.transcript_json else []
+            return locate_flags(flags, turns)
+        except Exception as e:  # noqa: BLE001 - locating must not affect the note
+            log.warning("note %s flag-locate FAILED: %s: %s", job.id, type(e).__name__, e)
+            return flags
+
     def _persist(self, job: NoteJob, note: str,
-                 problems: list | None = None, medications: list | None = None) -> None:
+                 problems: list | None = None, medications: list | None = None,
+                 review_flags: list | None = None) -> None:
         """Save a completed note to the store (best-effort; never raises), then
         copy its source audio into the audio store if available (ADR-0019).
-        problems/medications came from the same generation call (ADR-0023)."""
+        problems/medications/review_flags came from the same generation call
+        (ADR-0023/0029)."""
         if self._store is None:
             return
         try:
@@ -254,6 +276,7 @@ class NoteJobManager:
                 chief_complaint=job.chief_complaint,
                 problems_json=_json.dumps(problems or [], ensure_ascii=False) if has_ext else None,
                 medications_json=_json.dumps(medications or [], ensure_ascii=False) if has_ext else None,
+                review_flags_json=_json.dumps(review_flags, ensure_ascii=False) if review_flags else None,
             ))
             # Assign the patient up front, if one was chosen (ADR-0022/0016).
             if job.patient_id:

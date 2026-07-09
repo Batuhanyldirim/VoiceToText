@@ -128,8 +128,25 @@ ve hemen ardından SADECE geçerli bir JSON nesnesi ver (kod bloğu, açıklama 
 {"problems":[{"name":"...","status":"(ops.)","detail":"(ops.)"}],"medications":[{"name":"...","dose":"(ops.)","route":"(ops.)","frequency":"(ops.)"}]}
 Kurallar: YALNIZCA notta/transkriptte açıkça geçen sorun ve ilaçları listele, \
 hiçbir şey uydurma; yoksa ilgili diziyi boş bırak. Bu JSON bloğu notun bir parçası \
-DEĞİLDİR; işaretçiden önceki metin nihai nottur. İşaretçiyi ve JSON'u yalnızca bir \
-kez, en sonda yaz.
+DEĞİLDİR; işaretçiden önceki metin nihai nottur.
+
+## En SONDA: yapılandırılmış inceleme işaretleri (olası STT hataları)
+Sorun/ilaç JSON'undan SONRA, ayrı bir satıra tam olarak şu işaretçiyi yaz:
+<<<INCELEME_JSON>>>
+ve hemen ardından SADECE geçerli bir JSON nesnesi ver (kod bloğu/açıklama yok). Bu, \
+"Klinik İnceleme Gerekli" bölümünde prose olarak yazdıklarının MAKİNE-OKUNUR \
+karşılığıdır — özellikle olası konuşma-tanıma (STT) hataları:
+{"review_flags":[{"quote":"transkriptteki şüpheli ifade (BİREBİR)","reason":"neden şüpheli","category":"ilaç|doz|olumsuzlama|isim|tarih|sayı|belirsiz|diğer"}]}
+Kurallar:
+- "quote" alanı, transkriptte GEÇEN metinden BİREBİR (kelimesi kelimesine) kopyalanmalı \
+  ki arayüz o parçayı transkriptte bulup ses kaydında oynatabilsin. Notundaki \
+  düzeltilmiş hâlini DEĞİL, transkriptteki HAM ifadeyi yaz.
+- Öncelik: yanlış duyulmuş İLAÇ adları, hatalı DOZ/birim, düşmüş/ters OLUMSUZLAMA, \
+  karışmış İSİM/ilişki, yanlış TARİH/yaş/SAYI. Diğer belirsizlikleri de ekleyebilirsin.
+- Hiçbir şey uydurma; şüphe yoksa boş dizi döndür: {"review_flags":[]}.
+- Bu JSON da notun parçası DEĞİLDİR. İki işaretçiyi ve JSON'ları yalnızca birer kez, \
+  en sonda, ŞU SIRAYLA yaz: önce not, sonra <<<SORUN_ILAC_JSON>>> + JSON, en son \
+  <<<INCELEME_JSON>>> + JSON.
 
 Notu Türkçe yaz.\
 """

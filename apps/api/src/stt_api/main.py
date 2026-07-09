@@ -677,6 +677,8 @@ def _saved_note_response(saved) -> dict:
         "problems": saved.problems,
         "medications": saved.medications,
         "extracted": saved.extracted,
+        # Structured STT-review flags, located to turns for audio seek (ADR-0029).
+        "review_flags": saved.review_flags,
         # Audio-linked source transcript (ADR-0019): the turns + whether the
         # source recording is available at GET /notes/{id}/audio.
         "turns": saved.turns,
@@ -775,6 +777,26 @@ def edit_note(note_id: str, body: NoteEditBody) -> dict:
         raise HTTPException(409, str(e))
     if not saved:
         raise HTTPException(404, "note not found")
+    return _saved_note_response(saved)
+
+
+class TurnCorrectionBody(BaseModel):
+    turn_index: int
+    text: str
+
+
+@app.patch("/notes/{note_id}/turns")
+def correct_transcript_turn(note_id: str, body: TurnCorrectionBody) -> dict:
+    """Correct a single source-transcript turn's text after the doctor verified it
+    against the audio (ADR-0029). Fixes ONLY the transcript turn (marks it
+    `corrected` + resolves any STT-review flag on that turn); never touches the note
+    body. 404 if the note or turn index is unknown. This is the manual STT-error
+    correction path — the corrected turn is a real, human-verified label."""
+    if body.text is None:
+        raise HTTPException(400, "corrected text is required")
+    saved = note_store.update_transcript_turn(note_id, body.turn_index, body.text)
+    if not saved:
+        raise HTTPException(404, "note or turn not found")
     return _saved_note_response(saved)
 
 

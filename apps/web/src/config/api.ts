@@ -226,6 +226,29 @@ export function noteEventsUrl(id: string): string {
   return `${API}/notes/${encodeURIComponent(id)}/events`;
 }
 
+/** URL of a note's source recording (range-enabled; ADR-0019). */
+export function noteAudioUrl(id: string): string {
+  return `${API}/notes/${encodeURIComponent(id)}/audio`;
+}
+
+/** Correct a single source-transcript turn after verifying it against the audio
+ * (ADR-0029). Fixes only the transcript turn + resolves its STT-review flag;
+ * never touches the note body. Returns the updated note. */
+export async function correctTurn(
+  id: string,
+  turnIndex: number,
+  text: string,
+  signal?: AbortSignal,
+): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/turns`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turn_index: turnIndex, text }),
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
 // ---------------------------------------------------------------------------
 // Transcript reuse + note history
 // ---------------------------------------------------------------------------
