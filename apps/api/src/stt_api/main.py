@@ -846,6 +846,25 @@ def correct_transcript_turn(note_id: str, body: TurnCorrectionBody) -> dict:
     return _saved_note_response(saved)
 
 
+class FlagResolveBody(BaseModel):
+    resolved: bool = True
+
+
+@app.patch("/notes/{note_id}/flags/{flag_index}")
+def resolve_review_flag(note_id: str, flag_index: int,
+                        body: FlagResolveBody | None = None) -> dict:
+    """Mark an STT-review flag reviewed WITHOUT changing the transcript (ADR-0029):
+    the doctor verified it against the audio and the text is already correct. Tags
+    the flag resolution="acknowledged" (vs "corrected" from the turn-edit path) and
+    keeps it. Body {resolved:false} un-acknowledges. 404 if the note or flag index
+    is unknown; never touches the note body."""
+    resolved = body.resolved if body is not None else True
+    saved = note_store.resolve_review_flag(note_id, flag_index, resolved)
+    if not saved:
+        raise HTTPException(404, "note or flag not found")
+    return _saved_note_response(saved)
+
+
 @app.post("/notes/{note_id}/rediar")
 def rediarize_note(note_id: str) -> dict:
     """Re-assign speaker labels on the note's transcript using the local LLM's

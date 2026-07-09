@@ -75,6 +75,69 @@ def test_correct_turn_missing_note_returns_none(store):
     assert store.update_transcript_turn("nope", 0, "x") is None
 
 
+def test_correct_turn_tags_resolution_corrected(store):
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    store.set_review_flags("n1", [{"quote": "500 mg parasetamol", "turn_index": 1}])
+    store.update_transcript_turn("n1", 1, "Günde 50 mg parasetamol.")
+    assert store.get("n1").review_flags[0]["resolution"] == "corrected"
+
+
+# --- Acknowledge (reviewed, no text change) a review flag (ADR-0029) --------
+
+
+def test_resolve_flag_acknowledges_without_editing(store):
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    store.set_review_flags("n1", [{"quote": "500 mg parasetamol", "turn_index": 1},
+                                  {"quote": "başka", "turn_index": 0}])
+    updated = store.resolve_review_flag("n1", 0, True)
+    assert updated is not None
+    flags = store.get("n1").review_flags
+    assert flags[0]["resolved"] is True
+    assert flags[0]["resolution"] == "acknowledged"
+    assert flags[1].get("resolved") in (None, False)   # sibling untouched
+    # transcript turns are NOT modified by an acknowledge
+    assert store.get("n1").turns[1].get("corrected") is None
+
+
+def test_resolve_flag_undo(store):
+    make_saved_note(store)
+    store.set_review_flags("n1", [{"quote": "x", "turn_index": 0}])
+    store.resolve_review_flag("n1", 0, True)
+    store.resolve_review_flag("n1", 0, False)
+    f = store.get("n1").review_flags[0]
+    assert f["resolved"] is False
+    assert "resolution" not in f
+
+
+def test_resolve_flag_bad_index_and_missing(store):
+    make_saved_note(store)
+    store.set_review_flags("n1", [{"quote": "x", "turn_index": 0}])
+    assert store.resolve_review_flag("n1", 9, True) is None
+    assert store.resolve_review_flag("n1", -1, True) is None
+    assert store.resolve_review_flag("nope", 0, True) is None
+
+
+def test_resolve_flag_endpoint(client):
+    store = _store_of(client)
+    make_saved_note(store)
+    store.set_review_flags("n1", [{"quote": "x", "turn_index": 0}])
+    r = client.patch("/notes/n1/flags/0", json={"resolved": True})
+    assert r.status_code == 200
+    flags = r.json()["review_flags"]
+    assert flags[0]["resolved"] is True and flags[0]["resolution"] == "acknowledged"
+    # undo
+    r = client.patch("/notes/n1/flags/0", json={"resolved": False})
+    assert r.json()["review_flags"][0]["resolved"] is False
+    # bad index -> 404
+    assert client.patch("/notes/n1/flags/9", json={"resolved": True}).status_code == 404
+    assert client.patch("/notes/nope/flags/0", json={"resolved": True}).status_code == 404
+
+
+def _store_of(client):
+    import stt_api.main as main
+    return main.note_store
+
+
 def test_segments_json_round_trip(store):
     # Word-timestamped segments persist + parse back for word-precise seek (ADR-0030).
     segs = [{"start": 1.0, "end": 2.0, "text": "Hanifi",

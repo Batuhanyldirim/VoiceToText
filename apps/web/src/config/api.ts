@@ -261,6 +261,28 @@ export async function correctTurn(
   return asJson<Note>(res);
 }
 
+/** Mark an STT-review flag reviewed without editing the transcript (ADR-0029):
+ * the doctor checked it against the audio and the text is already correct. Tags
+ * it resolution="acknowledged". Pass resolved=false to un-acknowledge. Returns
+ * the updated note. */
+export async function resolveFlag(
+  id: string,
+  flagIndex: number,
+  resolved = true,
+  signal?: AbortSignal,
+): Promise<Note> {
+  const res = await fetch(
+    `${API}/notes/${encodeURIComponent(id)}/flags/${flagIndex}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resolved }),
+      signal,
+    },
+  );
+  return asJson<Note>(res);
+}
+
 // ---------------------------------------------------------------------------
 // Transcript reuse + note history
 // ---------------------------------------------------------------------------

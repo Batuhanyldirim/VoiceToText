@@ -23,8 +23,10 @@ import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
+import DoneRoundedIcon from "@mui/icons-material/DoneRounded";
+import UndoRoundedIcon from "@mui/icons-material/UndoRounded";
 import type { Note, ReviewFlag, Segment, Turn } from "../types";
-import { correctTurn, getNote, noteAudioUrl, rediarizeNote } from "../config/api";
+import { correctTurn, getNote, noteAudioUrl, rediarizeNote, resolveFlag } from "../config/api";
 import { navigate } from "../utils/router";
 import { formatTimestamp, speakerColor } from "../utils/format";
 
@@ -223,6 +225,20 @@ export default function TranscriptReviewPage({ noteId }: Props) {
     );
   };
 
+  const [resolvingFlag, setResolvingFlag] = useState<number | null>(null);
+  const onToggleFlag = async (flagIndex: number, resolved: boolean) => {
+    setResolvingFlag(flagIndex);
+    try {
+      const updated = await resolveFlag(noteId, flagIndex, resolved);
+      setNote(updated);
+      setToast(resolved ? "İşaret incelendi olarak işaretlendi." : "İşaret yeniden açıldı.");
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "İşlem başarısız");
+    } finally {
+      setResolvingFlag(null);
+    }
+  };
+
   const [rediarBusy, setRediarBusy] = useState(false);
   const doRediar = async () => {
     setRediarBusy(true);
@@ -358,6 +374,8 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                   <FlagRow
                     key={i}
                     flag={f}
+                    busy={resolvingFlag === i}
+                    onToggle={(resolved) => onToggleFlag(i, resolved)}
                     onJump={
                       typeof f.turn_index === "number"
                         ? () => seekToFlag(i, f.turn_index!, f.quote)
@@ -412,6 +430,8 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                   onSeek={() => seekToTurn(i)}
                   noteId={noteId}
                   onCorrected={onCorrected}
+                  onToggleFlag={onToggleFlag}
+                  resolvingFlag={resolvingFlag}
                 />
               ))}
             </Stack>
@@ -432,8 +452,21 @@ export default function TranscriptReviewPage({ noteId }: Props) {
 
 // --- A single flag in the summary list -------------------------------------
 
-function FlagRow({ flag, onJump }: { flag: ReviewFlag; onJump?: () => void }) {
+function FlagRow({
+  flag,
+  onJump,
+  onToggle,
+  busy,
+}: {
+  flag: ReviewFlag;
+  onJump?: () => void;
+  onToggle?: (resolved: boolean) => void;
+  busy?: boolean;
+}) {
   const cat = flag.category ?? "diğer";
+  // "acknowledged" = reviewed, transcript already correct; "corrected" = the turn
+  // text was edited (that path owns its own undo via re-editing the turn).
+  const acknowledged = flag.resolved && flag.resolution !== "corrected";
   return (
     <Stack
       direction="row"
@@ -460,13 +493,43 @@ function FlagRow({ flag, onJump }: { flag: ReviewFlag; onJump?: () => void }) {
           </Typography>
         ) : null}
       </Box>
-      {flag.resolved ? (
-        <CheckCircleRoundedIcon color="success" fontSize="small" />
-      ) : onJump ? (
+      {onJump && !flag.resolved ? (
         <Tooltip title="Sesde bu ana git">
           <IconButton size="small" onClick={onJump} color="primary">
             <PlayArrowRoundedIcon />
           </IconButton>
+        </Tooltip>
+      ) : null}
+      {flag.resolved ? (
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+          <CheckCircleRoundedIcon color="success" fontSize="small" />
+          {acknowledged && onToggle ? (
+            <Tooltip title="İncelendi işaretini geri al">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => onToggle(false)}
+                  disabled={busy}
+                >
+                  {busy ? <CircularProgress size={16} /> : <UndoRoundedIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          ) : null}
+        </Stack>
+      ) : onToggle ? (
+        <Tooltip title="Deşifre doğru — incelendi olarak işaretle">
+          <Button
+            size="small"
+            variant="outlined"
+            color="success"
+            startIcon={busy ? <CircularProgress size={14} /> : <DoneRoundedIcon />}
+            onClick={() => onToggle(true)}
+            disabled={busy}
+            sx={{ flexShrink: 0 }}
+          >
+            İncelendi
+          </Button>
         </Tooltip>
       ) : (
         <Tooltip title="Bu ifade deşifrede tam olarak bulunamadı">
@@ -598,10 +661,12 @@ interface TurnRowProps {
   onSeek: () => void;
   noteId: string;
   onCorrected: (n: Note, category?: string) => void;
+  onToggleFlag: (flagIndex: number, resolved: boolean) => void;
+  resolvingFlag: number | null;
 }
 
 const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
-  { turn, index, wordTimes, onWordSeek, flags, active, activeFlag, markRefs, canSeek, onSeek, noteId, onCorrected },
+  { turn, index, wordTimes, onWordSeek, flags, active, activeFlag, markRefs, canSeek, onSeek, noteId, onCorrected, onToggleFlag, resolvingFlag },
   ref,
 ) {
   const [editing, setEditing] = useState(false);
@@ -782,24 +847,57 @@ const TurnRow = forwardRef<HTMLDivElement, TurnRowProps>(function TurnRow(
               {renderTurnWords(turn.text, wordTimes, flags, activeFlag, markRefs, onWordSeek)}
             </Typography>
             {flagged && (
-              <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: "wrap" }}>
-                {flags.map(({ flag: f }, k) => (
-                  <Chip
-                    key={k}
-                    size="small"
-                    icon={
-                      f.resolved ? (
-                        <CheckCircleRoundedIcon />
-                      ) : (
-                        <WarningAmberRoundedIcon />
-                      )
-                    }
-                    color={f.resolved ? "success" : "warning"}
-                    variant="outlined"
-                    label={f.reason || CATEGORY_LABELS[f.category ?? "diğer"] || "incele"}
-                    sx={{ maxWidth: "100%" }}
-                  />
-                ))}
+              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                {flags.map(({ flag: f, flagIndex }, k) => {
+                  const acknowledged = f.resolved && f.resolution !== "corrected";
+                  const busy = resolvingFlag === flagIndex;
+                  return (
+                    <Stack
+                      key={k}
+                      direction="row"
+                      spacing={0.5}
+                      sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}
+                    >
+                      <Chip
+                        size="small"
+                        icon={
+                          f.resolved ? <CheckCircleRoundedIcon /> : <WarningAmberRoundedIcon />
+                        }
+                        color={f.resolved ? "success" : "warning"}
+                        variant="outlined"
+                        label={f.reason || CATEGORY_LABELS[f.category ?? "diğer"] || "incele"}
+                        sx={{ maxWidth: "100%" }}
+                      />
+                      {!f.resolved ? (
+                        <Tooltip title="Deşifre doğru — incelendi olarak işaretle">
+                          <Button
+                            size="small"
+                            variant="text"
+                            color="success"
+                            startIcon={busy ? <CircularProgress size={13} /> : <DoneRoundedIcon />}
+                            onClick={() => onToggleFlag(flagIndex, true)}
+                            disabled={busy}
+                            sx={{ minWidth: 0, py: 0 }}
+                          >
+                            İncelendi
+                          </Button>
+                        </Tooltip>
+                      ) : acknowledged ? (
+                        <Tooltip title="İncelendi işaretini geri al">
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => onToggleFlag(flagIndex, false)}
+                              disabled={busy}
+                            >
+                              {busy ? <CircularProgress size={14} /> : <UndoRoundedIcon fontSize="small" />}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      ) : null}
+                    </Stack>
+                  );
+                })}
               </Stack>
             )}
           </>

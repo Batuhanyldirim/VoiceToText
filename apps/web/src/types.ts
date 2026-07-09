@@ -1,4 +1,4 @@
-// Shared domain types for the VoiceToText frontend.
+// Shared domain types for the Divit frontend.
 
 export type JobStatus = "queued" | "running" | "done" | "error";
 
@@ -359,6 +359,9 @@ export interface ReviewFlag {
   end?: number | null;
   matched?: boolean;
   resolved?: boolean;
+  /** How it was cleared: "corrected" (turn text edited) | "acknowledged" (reviewed,
+   * transcript already correct). Absent when still open (ADR-0029). */
+  resolution?: "corrected" | "acknowledged";
 }
 
 /** An extracted problem-list entry (ADR-0023). */

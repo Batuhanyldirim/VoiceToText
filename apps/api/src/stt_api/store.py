@@ -492,6 +492,37 @@ class NoteStore:
         note.review_flags_json = fj
         return note
 
+    def resolve_review_flag(self, note_id: str, flag_index: int,
+                            resolved: bool = True) -> Optional[SavedNote]:
+        """Mark a single STT-review flag reviewed WITHOUT editing the transcript
+        (ADR-0029). For consistency/ambiguity flags the doctor verified against the
+        audio and found the transcript already correct — there's nothing to correct,
+        so this just records "reviewed, no change needed". The flag is kept (not
+        deleted) and tagged resolution="acknowledged" so it stays distinguishable
+        from a flag cleared by an actual text correction (resolution="corrected").
+        Set resolved=False to un-acknowledge. Returns None if the note/flag is
+        missing (flag_index out of range)."""
+        import json
+        note = self.get(note_id)
+        if not note:
+            return None
+        flags = note.review_flags
+        if flag_index < 0 or flag_index >= len(flags):
+            return None
+        f = flags[flag_index]
+        f["resolved"] = bool(resolved)
+        if resolved:
+            f["resolution"] = "acknowledged"
+        else:
+            f.pop("resolution", None)
+        fj = json.dumps(flags, ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET review_flags_json = ? WHERE id = ?", (fj, note_id)
+            )
+        note.review_flags_json = fj
+        return note
+
     def update_transcript_turn(self, note_id: str, turn_index: int, text: str
                                ) -> Optional[SavedNote]:
         """Correct a single transcript turn's text in place (ADR-0029) and, if a
@@ -519,6 +550,7 @@ class NoteStore:
         for f in flags:
             if f.get("turn_index") == turn_index and not f.get("resolved"):
                 f["resolved"] = True
+                f["resolution"] = "corrected"
                 changed = True
         fj = json.dumps(flags, ensure_ascii=False) if changed else None
         with self._connect() as conn:
