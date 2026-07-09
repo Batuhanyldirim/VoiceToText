@@ -90,6 +90,15 @@ def test_segments_default_empty(store):
     assert store.get("n1").segments == []
 
 
+def test_set_segments_backfill(store):
+    # Backfill word timestamps onto a note that never had them (ADR-0030).
+    make_saved_note(store)
+    segs = [{"start": 1.0, "end": 2.0, "words": [{"word": "x", "start": 1.0}]}]
+    store.set_segments("n1", segs)
+    assert store.get("n1").segments[0]["words"][0]["start"] == 1.0
+    assert store.set_segments("nope", segs) is None
+
+
 def test_set_transcript_turns_bulk_replace(store):
     # Used by the LLM re-label (ADR-0030): replace all turns, note body untouched.
     make_saved_note(store, note="AI NOTE",

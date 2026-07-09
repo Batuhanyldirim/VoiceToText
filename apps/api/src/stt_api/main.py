@@ -710,6 +710,40 @@ def _saved_note_response(saved) -> dict:
     }
 
 
+def _backfill_segments(saved) -> None:
+    """Best-effort: give a note WORD timestamps it never had (ADR-0030) by copying
+    the segments from its matching out/<source>.json CLI transcript, but ONLY when
+    that transcript's turns match the note's (same transcription). Lets notes made
+    before word-timestamp persistence become word-seekable without regeneration.
+    Never raises; a mismatch/absence just leaves the note turn-level."""
+    if saved.segments or not saved.turns or not saved.source_name:
+        return
+    stem = Path(saved.source_name).stem
+    if "/" in stem or "\\" in stem or ".." in stem:
+        return
+    path = OUT_DIR / f"{stem}.json"
+    if not path.is_file() or path.parent.resolve() != OUT_DIR.resolve():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        src_turns = data.get("turns") or []
+        segs = data.get("segments") or []
+        note_turns = saved.turns
+        # Guard: only adopt when the transcripts clearly match (same turn count +
+        # first turn text) and the segments actually carry word timestamps.
+        matches = (
+            len(src_turns) == len(note_turns)
+            and bool(note_turns) and bool(src_turns)
+            and (src_turns[0].get("text") or "")[:60] == (note_turns[0].get("text") or "")[:60]
+            and any(s.get("words") for s in segs)
+        )
+        if matches:
+            note_store.set_segments(saved.id, segs)
+            saved.segments_json = json.dumps(segs, ensure_ascii=False)
+    except Exception:  # noqa: BLE001 - backfill must never break note loading
+        pass
+
+
 @app.get("/notes/{note_id}")
 def get_note(note_id: str) -> dict:
     # The durable store is authoritative for a COMPLETED note's body + lifecycle
@@ -717,6 +751,7 @@ def get_note(note_id: str) -> dict:
     # while it's still generating (not yet persisted).
     saved = note_store.get(note_id)
     if saved:
+        _backfill_segments(saved)  # word timestamps for pre-ADR-0030 notes (ADR-0030)
         return _saved_note_response(saved)
     job = note_manager.get(note_id)
     if job:

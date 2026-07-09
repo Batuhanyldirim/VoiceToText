@@ -462,6 +462,21 @@ class NoteStore:
         note.medications_json = mj
         return note
 
+    def set_segments(self, note_id: str, segments: list) -> Optional[SavedNote]:
+        """Persist word-timestamped segments on a note (ADR-0030) — used to backfill
+        notes made before word-timestamp persistence. Returns None if missing."""
+        import json
+        note = self.get(note_id)
+        if not note:
+            return None
+        sj = json.dumps(segments or [], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET segments_json = ? WHERE id = ?", (sj, note_id)
+            )
+        note.segments_json = sj
+        return note
+
     def set_review_flags(self, note_id: str, flags: list) -> Optional[SavedNote]:
         """Persist located STT-review flags on a note (ADR-0029). Overwrites any
         prior flags. Returns None if the note is missing."""
