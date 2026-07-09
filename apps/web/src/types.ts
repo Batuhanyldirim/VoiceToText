@@ -331,6 +331,8 @@ export interface Note {
   extracted?: boolean;
   // Structured STT-review flags, located to turns for audio seek (ADR-0029).
   review_flags?: ReviewFlag[];
+  // Summary of an LLM speaker re-labeling run (ADR-0030), present on the /rediar response.
+  rediar?: { applied: boolean; coverage: number; n_roles: number; provider?: string; model?: string };
 }
 
 /** A located STT-review flag: a likely-mistranscribed span the doctor should

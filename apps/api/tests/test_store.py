@@ -75,6 +75,19 @@ def test_correct_turn_missing_note_returns_none(store):
     assert store.update_transcript_turn("nope", 0, "x") is None
 
 
+def test_set_transcript_turns_bulk_replace(store):
+    # Used by the LLM re-label (ADR-0030): replace all turns, note body untouched.
+    make_saved_note(store, note="AI NOTE",
+                    transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    relabeled = [{**t, "speaker": "Doktor" if i % 2 == 0 else "Hasta/Yakın"}
+                 for i, t in enumerate(_turns())]
+    store.set_transcript_turns("n1", relabeled)
+    n = store.get("n1")
+    assert [t["speaker"] for t in n.turns] == ["Doktor", "Hasta/Yakın"]
+    assert n.note == "AI NOTE"       # note body untouched
+    assert store.set_transcript_turns("nope", []) is None
+
+
 # --- note edit / finalize lifecycle (ADR-0015) -----------------------------
 
 def test_edit_is_an_overlay_ai_original_preserved(store):

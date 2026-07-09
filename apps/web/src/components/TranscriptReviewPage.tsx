@@ -22,8 +22,9 @@ import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
+import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
 import type { Note, ReviewFlag, Turn } from "../types";
-import { correctTurn, getNote, noteAudioUrl } from "../config/api";
+import { correctTurn, getNote, noteAudioUrl, rediarizeNote } from "../config/api";
 import { navigate } from "../utils/router";
 import { formatTimestamp, speakerColor } from "../utils/format";
 
@@ -120,6 +121,25 @@ export default function TranscriptReviewPage({ noteId }: Props) {
         ? `Düzeltme kaydedildi (${CATEGORY_LABELS[category] ?? category}).`
         : "Düzeltme kaydedildi.",
     );
+  };
+
+  const [rediarBusy, setRediarBusy] = useState(false);
+  const doRediar = async () => {
+    setRediarBusy(true);
+    try {
+      const updated = await rediarizeNote(noteId);
+      setNote(updated);
+      setActiveIdx(null);
+      setToast(
+        updated.rediar?.applied
+          ? "Konuşmacılar konuşma akışına göre yeniden atandı."
+          : "Yeniden atama uygulanmadı (yeterince ayırt edilemedi); mevcut etiketler korundu.",
+      );
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Yeniden atama başarısız");
+    } finally {
+      setRediarBusy(false);
+    }
   };
 
   if (loading) {
@@ -251,12 +271,24 @@ export default function TranscriptReviewPage({ noteId }: Props) {
         {/* Raw transcript with inline correction */}
         <Card variant="outlined">
           <CardContent>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
-              Ham deşifre
-            </Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, flexGrow: 1 }}>
+                Ham deşifre
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<GroupsRoundedIcon />}
+                onClick={doRediar}
+                disabled={rediarBusy}
+              >
+                {rediarBusy ? "Atanıyor…" : "Konuşmacıları yeniden ata"}
+              </Button>
+            </Stack>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
               İşaretli konuşmalar sarı ile vurgulanır. Sesi o ana götürmek için ▶ simgesine,
-              metni düzeltmek için ✎ simgesine dokunun.
+              metni düzeltmek için ✎ simgesine dokunun. Konuşmacılar karıştıysa, konuşma
+              akışına göre (soru/cevap) yeniden atamayı deneyin.
             </Typography>
             <Divider sx={{ mb: 1.5 }} />
             <Stack spacing={0.5}>

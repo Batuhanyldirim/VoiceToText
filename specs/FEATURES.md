@@ -101,6 +101,15 @@ The success gate: a transcript with **≥ 2 distinct speakers**. CPU-only by des
   panel: the source turns with timestamps, and (when the recording is kept) a
   player where **clicking a turn plays that moment** — verify an ambiguous passage
   against the original audio. *(REQ-143–146; ADR-0019)*
+- **Speaker re-assignment for merged diarization** — when acoustic diarization
+  collapses two similar voices (rapid doctor↔patient Q&A) into one speaker, a
+  **"Konuşmacıları yeniden ata"** action on the review page uses the **local LLM's
+  conversational logic** (doctor-asks/parent-answers) to re-label each turn's
+  speaker — measured 3→88/100 coherence (Opus-judge) on a real intake. Reviewable +
+  fail-closed; touches only the transcript. Also: diarization now runs on **raw
+  (un-enhanced) audio** by default (better separation), records a
+  `raw_diar_speakers` merge diagnostic, and exposes clustering knobs.
+  *(REQ-176–181; ADR-0030)*
 - **STT-error review & correction** — the note flags likely mistranscriptions
   (misheard drug/dose/negation/name) as **structured, located** review flags (same
   single generation call, no extra AI cost). A dedicated **review page**

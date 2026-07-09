@@ -800,6 +800,39 @@ def correct_transcript_turn(note_id: str, body: TurnCorrectionBody) -> dict:
     return _saved_note_response(saved)
 
 
+@app.post("/notes/{note_id}/rediar")
+def rediarize_note(note_id: str) -> dict:
+    """Re-assign speaker labels on the note's transcript using the local LLM's
+    doctor-asks/parent-answers reasoning (ADR-0030) — the fix for the short-turn
+    speaker-merge failure where acoustic diarization collapses similar voices into
+    one speaker. Runs on the transcript SEGMENTS/turns, applies the new labeling
+    ONLY if it passes the acceptance guard (>=80% coverage AND >=2 distinct roles),
+    else leaves the acoustic labels unchanged (fail-closed). Never touches the note
+    body. PHI stays local (Ollama). Returns the updated note + a rediar summary."""
+    from note_core.models import NoteOptions
+    from note_core.providers import ProviderError
+    from note_core.rediar import apply_relabel, relabel_turns
+
+    saved = note_store.get(note_id)
+    if not saved:
+        raise HTTPException(404, "note not found")
+    turns = saved.turns
+    if not turns:
+        raise HTTPException(400, "note has no source transcript turns to re-label")
+    try:
+        res = relabel_turns(turns, NoteOptions(temperature=0.0))
+    except ProviderError as e:
+        raise HTTPException(502, str(e))
+    relabeled = apply_relabel(turns, res)
+    if res.applied:
+        note_store.set_transcript_turns(note_id, relabeled)
+    saved = note_store.get(note_id)
+    out = _saved_note_response(saved)
+    out["rediar"] = {"applied": res.applied, "coverage": res.coverage,
+                     "n_roles": res.n_roles, "provider": res.provider, "model": res.model}
+    return out
+
+
 @app.post("/notes/{note_id}/finalize")
 def finalize_note(note_id: str) -> dict:
     """Mark a note final (locks edits) + stamp finalized_at."""

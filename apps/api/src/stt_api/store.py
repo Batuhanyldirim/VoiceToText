@@ -504,6 +504,22 @@ class NoteStore:
             note.review_flags_json = fj
         return note
 
+    def set_transcript_turns(self, note_id: str, turns: list) -> Optional[SavedNote]:
+        """Replace the whole transcript-turns list (ADR-0030) — used to apply an
+        LLM speaker RE-LABELING (doctor/patient roles). Replaces ONLY the transcript
+        turns; never touches the note body. Returns None if the note is missing."""
+        import json
+        note = self.get(note_id)
+        if not note:
+            return None
+        tj = json.dumps(turns or [], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notes SET transcript_json = ? WHERE id = ?", (tj, note_id)
+            )
+        note.transcript_json = tj
+        return note
+
     # --- version history (ADR-0020) ------------------------------------------
 
     def list_versions(self, note_id: str) -> list[dict]:

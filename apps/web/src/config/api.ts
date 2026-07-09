@@ -231,6 +231,18 @@ export function noteAudioUrl(id: string): string {
   return `${API}/notes/${encodeURIComponent(id)}/audio`;
 }
 
+/** Re-assign speaker labels on the note's transcript via the local LLM's
+ * doctor-asks/parent-answers reasoning (ADR-0030) — recovers the speaker split
+ * when acoustic diarization merged similar voices. Applies only if confident
+ * (fail-closed). Returns the updated note (with a `rediar` summary field). */
+export async function rediarizeNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/rediar`, {
+    method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
 /** Correct a single source-transcript turn after verifying it against the audio
  * (ADR-0029). Fixes only the transcript turn + resolves its STT-review flag;
  * never touches the note body. Returns the updated note. */

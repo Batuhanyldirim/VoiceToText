@@ -50,39 +50,54 @@ def diarize_dataframe(diarization):
     return df
 
 
-def load_diarizer(diar_model: str, hf_token: str, device, log: Callable[[str], None] = lambda m: None):
+def load_diarizer(diar_model: str, hf_token: str, device, log: Callable[[str], None] = lambda m: None,
+                  clustering_threshold: float | None = None,
+                  min_cluster_size: int | None = None):
     """Return a callable(audio, min_speakers, max_speakers) -> diarization DataFrame.
 
     Attempt 1: the turnkey meta-model (e.g. speaker-diarization-3.1). Attempt 2
     (on any failure): assemble the pipeline from component models
     (segmentation-3.0 + wespeaker) with the standard 3.1 hyper-params. DO NOT
     remove attempt 2 — see ADR-0005.
+
+    `clustering_threshold` / `min_cluster_size` (ADR-0030): when EITHER is set, force
+    the tunable COMPONENT pipeline (skip attempt 1) and apply the overrides — the
+    turnkey meta-model does not reliably honor instantiate() overrides, so tuning
+    for similar-voice / short-turn dialogue only works through the component path.
+    Lower threshold (e.g. 0.50) + smaller min_cluster_size (e.g. 6) split similar
+    voices more readily (measured: dominant-speaker share 92%→55%). None = defaults.
     """
     import torch
     from pyannote.audio import Pipeline
 
     tdev = torch.device(device) if isinstance(device, str) else device
+    tuned = clustering_threshold is not None or min_cluster_size is not None
 
     # pyannote emits version-mismatch spam via raw print() at several points
     # during model load — the Pipeline AND each underlying Model (segmentation,
     # embedding) re-check on from_pretrained and .to(). Mute across the whole
     # setup (construct + instantiate + .to) so we catch every call site while
     # keeping the load-bearing "Could not download …" fallback message visible.
-    # --- Attempt 1: the turnkey meta-pipeline ---
-    try:
-        with _mute_version_warnings():
-            pipe = Pipeline.from_pretrained(diar_model, use_auth_token=hf_token)
-            if pipe is None:
-                raise RuntimeError(f"{diar_model} returned None (terms not accepted?)")
-            pipe.to(tdev)
-        log(f"Diarizer: using turnkey model '{diar_model}'.")
-        return _wrap_pipeline(pipe)
-    except Exception as e:  # noqa: BLE001
-        log(f"Diarizer: '{diar_model}' unavailable ({type(e).__name__}: {str(e).splitlines()[0][:80]}).")
-        log("Diarizer: falling back to component pipeline (segmentation-3.0 + wespeaker).")
+    # --- Attempt 1: the turnkey meta-pipeline (SKIPPED when clustering is tuned) ---
+    if not tuned:
+        try:
+            with _mute_version_warnings():
+                pipe = Pipeline.from_pretrained(diar_model, use_auth_token=hf_token)
+                if pipe is None:
+                    raise RuntimeError(f"{diar_model} returned None (terms not accepted?)")
+                pipe.to(tdev)
+            log(f"Diarizer: using turnkey model '{diar_model}'.")
+            return _wrap_pipeline(pipe)
+        except Exception as e:  # noqa: BLE001
+            log(f"Diarizer: '{diar_model}' unavailable ({type(e).__name__}: {str(e).splitlines()[0][:80]}).")
+            log("Diarizer: falling back to component pipeline (segmentation-3.0 + wespeaker).")
+    else:
+        log("Diarizer: clustering tuned -> using tunable component pipeline directly.")
 
     # --- Attempt 2: build from components (accessible without the meta-model) ---
     from pyannote.audio.pipelines import SpeakerDiarization
+    threshold = clustering_threshold if clustering_threshold is not None else 0.7045654963945799
+    mcs = min_cluster_size if min_cluster_size is not None else 12
     with _mute_version_warnings():
         pipe = SpeakerDiarization(
             segmentation="pyannote/segmentation-3.0",
@@ -90,13 +105,14 @@ def load_diarizer(diar_model: str, hf_token: str, device, log: Callable[[str], N
             clustering="AgglomerativeClustering",
             use_auth_token=hf_token,
         )
-        # Standard hyper-parameters from the speaker-diarization-3.1 recipe.
+        # Hyper-parameters from the speaker-diarization-3.1 recipe, with optional
+        # ADR-0030 overrides for similar-voice / short-turn dialogue.
         pipe.instantiate({
-            "clustering": {"method": "centroid", "min_cluster_size": 12, "threshold": 0.7045654963945799},
+            "clustering": {"method": "centroid", "min_cluster_size": mcs, "threshold": threshold},
             "segmentation": {"min_duration_off": 0.0},
         })
         pipe.to(tdev)
-    log("Diarizer: using component pipeline.")
+    log(f"Diarizer: using component pipeline (threshold={threshold:.4f}, min_cluster_size={mcs}).")
     return _wrap_pipeline(pipe)
 
 

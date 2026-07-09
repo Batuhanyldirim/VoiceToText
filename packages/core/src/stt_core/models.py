@@ -32,6 +32,19 @@ class TranscribeOptions:
     max_speakers: Optional[int] = 2
     diar_model: str = "pyannote/speaker-diarization-3.1"
     hf_token: Optional[str] = None          # required when diarize=True
+    # --- Diarization tuning for similar-voice / short-turn dialogue (ADR-0030) ---
+    # Diarize on the RAW (un-enhanced) audio by default: measured on a real clinical
+    # intake, the enhancement chain (speechnorm+dynaudnorm+loudnorm) flattens every
+    # speaker to the same loudness and HURTS separation (dominant-speaker share
+    # 92%→75% just by switching enhanced→raw). ASR still uses the enhanced audio.
+    # Set True to diarize on the enhanced audio (old behavior).
+    diar_on_enhanced: bool = False
+    # AgglomerativeClustering knobs (only applied when the tunable component
+    # pipeline is used — see diarize.py). Lower threshold + smaller min_cluster_size
+    # split similar voices more readily (measured 92%→55% dominant share at 0.50/6).
+    # None = use the pyannote-3.1 recipe defaults (0.7045 / 12).
+    diar_clustering_threshold: Optional[float] = None
+    diar_min_cluster_size: Optional[int] = None
     # Extra faster-whisper decode options forwarded verbatim to
     # whisperx.load_model(asr_options=...). The biasing seam (REQ-139, ADR-0028):
     # e.g. {"initial_prompt": "<Turkish clinical prose>"} or {"hotwords": "..."}.
@@ -66,6 +79,11 @@ class TranscribeResult:
     # reused transcript can still report how long it took (set by the caller
     # after transcribe() returns). None for older files that predate this field.
     transcribe_seconds: Optional[float] = None
+    # Distinct real speaker clusters pyannote emitted BEFORE fusion (ADR-0030).
+    # The diagnostic that distinguishes a clustering-merge (==1: pyannote itself
+    # collapsed the speakers) from a fusion artifact. None when diarization didn't
+    # run. Lets the eval harness assert >=2 and the UI warn on a merge.
+    raw_diar_speakers: Optional[int] = None
 
     def to_dict(self) -> dict:
         """JSON-serializable dict (the shape the old CLI wrote to <name>.json)."""
@@ -77,4 +95,5 @@ class TranscribeResult:
             "turns": [t if isinstance(t, dict) else t.__dict__ for t in self.turns],
             "segments": self.segments,
             "transcribe_seconds": self.transcribe_seconds,
+            "raw_diar_speakers": self.raw_diar_speakers,
         }

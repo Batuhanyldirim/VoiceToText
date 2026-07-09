@@ -499,6 +499,38 @@ the transcript turn against what was actually said.
   `/notes/{id}/audio`), and allows inline correction; the note viewer SHALL show an
   entry banner while open flags remain. *(→ ADR-0029, ADR-0019)*
 
+## Diarization for similar-voice / short-turn dialogue (→ ADR-0030)
+
+Fixes the measured failure where acoustic diarization collapses two similar voices
+in a rapid Q&A intake into one speaker (~92% of speech).
+
+- **REQ-176** (Ubiquitous) — THE pipeline SHALL diarize on the **raw (un-enhanced)
+  audio by default** (`diar_on_enhanced=False`), because the enhancement chain
+  flattens speaker loudness and hurts separation; ASR SHALL continue to use the
+  enhanced audio. *(→ ADR-0030, ADR-0004)*
+- **REQ-177** (Event) — WHEN `diar_clustering_threshold` or `diar_min_cluster_size`
+  is set, THE diarizer SHALL use the tunable component pipeline and apply the
+  overrides (the turnkey meta-model does not honor them); default None keeps the
+  pyannote-3.1 recipe values. *(→ ADR-0030, ADR-0005)*
+- **REQ-178** (Ubiquitous) — THE `TranscribeResult` SHALL record
+  `raw_diar_speakers` — the distinct speaker clusters emitted BEFORE fusion — so a
+  clustering-merge (`==1`) is distinguishable from a fusion artifact and the eval
+  harness can assert `≥2`. *(→ ADR-0030, ADR-0026)*
+- **REQ-179** (Event) — WHEN a clinician requests speaker re-assignment
+  (`POST /notes/{id}/rediar`), THE SYSTEM SHALL ask the **local** LLM to assign a
+  role (doktor/hasta/diğer) per transcript turn from conversational logic, and SHALL
+  apply the new labeling ONLY if it passes an acceptance guard (≥80% coverage AND ≥2
+  distinct roles), else keep the acoustic labels (fail-closed). It SHALL map roles by
+  turn index (never re-quote text) and SHALL NOT modify the note body. PHI stays
+  local. *(→ ADR-0030, ADR-0009, ADR-0015)*
+- **REQ-180** (State) — WHILE viewing the transcript review page, THE web UI SHALL
+  offer a **"Konuşmacıları yeniden ata"** action that runs `/rediar` and reports
+  whether the re-labeling was applied. *(→ ADR-0030, ADR-0029)*
+- **REQ-181** (Ubiquitous) — Speaker re-labeling and transcript correction SHALL
+  replace ONLY the transcript turns (`set_transcript_turns` / `update_transcript_turn`);
+  the AI note body and the clinician edit overlay (ADR-0015) SHALL remain
+  independent. *(→ ADR-0030, ADR-0029)*
+
 ## Home dashboard & navigation
 
 A landing page ("Bugün") and clearly-visible primary navigation. *(→ ADR-0025,

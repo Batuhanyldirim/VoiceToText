@@ -301,6 +301,66 @@ def test_extract_provider_error_400(client, monkeypatch):
     assert client.post("/notes/n1/extract").status_code == 400
 
 
+# --- LLM speaker re-labeling (ADR-0030) ------------------------------------
+
+def test_rediar_applies_role_labels(client, monkeypatch):
+    import json
+    from note_core import rediar
+    from note_core.rediar import RelabelResult
+
+    turns = [
+        {"speaker": "SPEAKER_00", "text": "Doğum tarihi?", "start": 0.0, "end": 1.0},
+        {"speaker": "SPEAKER_00", "text": "2017.", "start": 1.0, "end": 2.0},
+    ]
+    _seed_note(client, "n1", transcript_json=json.dumps(turns, ensure_ascii=False))
+
+    # Stub the LLM: return a clean 2-role labeling (doktor asks, hasta answers).
+    def fake_relabel(t, opts=None):
+        return RelabelResult(provider="ollama", model="test",
+                             labels=["Doktor", "Hasta/Yakın"], roles=["doktor", "hasta"],
+                             coverage=1.0, n_roles=2)
+    monkeypatch.setattr(rediar, "relabel_turns", fake_relabel)
+
+    r = client.post("/notes/n1/rediar")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rediar"]["applied"] is True
+    assert [t["speaker"] for t in body["turns"]] == ["Doktor", "Hasta/Yakın"]
+    # persisted
+    got = client.get("/notes/n1").json()
+    assert [t["speaker"] for t in got["turns"]] == ["Doktor", "Hasta/Yakın"]
+
+
+def test_rediar_fail_closed_keeps_labels(client, monkeypatch):
+    import json
+    from note_core import rediar
+    from note_core.rediar import RelabelResult
+
+    turns = [{"speaker": "SPEAKER_00", "text": "a", "start": 0.0, "end": 1.0},
+             {"speaker": "SPEAKER_00", "text": "b", "start": 1.0, "end": 2.0}]
+    _seed_note(client, "n1", transcript_json=json.dumps(turns, ensure_ascii=False))
+
+    # Low coverage -> guard rejects -> acoustic labels kept.
+    def fake_relabel(t, opts=None):
+        return RelabelResult(provider="ollama", model="test",
+                             labels=["Doktor", "SPEAKER_00"], roles=["doktor", None],
+                             coverage=0.5, n_roles=1)
+    monkeypatch.setattr(rediar, "relabel_turns", fake_relabel)
+
+    body = client.post("/notes/n1/rediar").json()
+    assert body["rediar"]["applied"] is False
+    assert [t["speaker"] for t in body["turns"]] == ["SPEAKER_00", "SPEAKER_00"]
+
+
+def test_rediar_no_turns_400(client):
+    _seed_note(client, "n1", note="body")  # no transcript_json
+    assert client.post("/notes/n1/rediar").status_code == 400
+
+
+def test_rediar_unknown_note_404(client):
+    assert client.post("/notes/nope/rediar").status_code == 404
+
+
 # --- custom note templates (ADR-0021) --------------------------------------
 
 def test_custom_template_crud(client):

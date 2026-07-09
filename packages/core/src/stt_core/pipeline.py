@@ -116,14 +116,37 @@ def transcribe(
         log(f"Alignment skipped for '{language}' ({type(e).__name__}: {str(e).splitlines()[0][:80]}).")
 
     speaker_map: dict = {}
+    raw_diar_speakers: Optional[int] = None
 
     # --- Stage 4 + 5: diarize + fuse ---
     if opts.diarize:
         progress(ProgressEvent(stage="diarize", message="identifying speakers"))
-        diarizer = load_diarizer(opts.diar_model, opts.hf_token, device, log=log)
-        diar_segments = diarizer(
-            audio, min_speakers=opts.min_speakers, max_speakers=opts.max_speakers
+        diarizer = load_diarizer(
+            opts.diar_model, opts.hf_token, device, log=log,
+            clustering_threshold=opts.diar_clustering_threshold,
+            min_cluster_size=opts.diar_min_cluster_size,
         )
+        # Diarize on the RAW audio by default (ADR-0030): the enhancement chain
+        # flattens speakers to one loudness and hurts separation. ASR already used
+        # the enhanced `audio`; decode the original just for diarization unless the
+        # caller opts into diarizing on the enhanced signal.
+        if opts.enhance and not opts.diar_on_enhanced:
+            log("Diarizer: using RAW (un-enhanced) audio for speaker separation.")
+            diar_audio = whisperx.load_audio(str(input_path))
+        else:
+            diar_audio = audio
+        diar_segments = diarizer(
+            diar_audio, min_speakers=opts.min_speakers, max_speakers=opts.max_speakers
+        )
+        # Diagnostic: how many distinct real speakers did clustering emit BEFORE
+        # fusion? ==1 means pyannote itself merged them (a clustering problem, not a
+        # fusion artifact) — ADR-0030. Guarded: never let a diagnostic crash the run.
+        try:
+            spks = {s for s in diar_segments["speaker"].tolist() if s is not None}
+            raw_diar_speakers = len(spks)
+            log(f"Diarizer: emitted {raw_diar_speakers} distinct speaker(s) before fusion.")
+        except Exception:  # noqa: BLE001
+            raw_diar_speakers = None
         progress(ProgressEvent(stage="fuse", message="assigning speakers"))
         if aligned:
             result = whisperx.assign_word_speakers(diar_segments, result)
@@ -141,4 +164,5 @@ def transcribe(
         speaker_map=speaker_map,
         turns=turns,
         segments=segments,
+        raw_diar_speakers=raw_diar_speakers,
     )
