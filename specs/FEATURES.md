@@ -60,11 +60,17 @@ The success gate: a transcript with **≥ 2 distinct speakers**. CPU-only by des
 
 ### Transcription
 - **Speaker-diarized transcription** — the core pipeline above (CLI + API + web).
-  Turkish default; auto language/speaker detection; downloads as **txt / srt /
-  json**. *(REQ-001–097; ADR-0001–0008)*
+  **Turkish-forced by default** (override with `auto`/another code), **soft 2-speaker
+  cap** (doctor+patient, raisable); downloads as **txt / srt / json**.
+  *(REQ-001–097, REQ-135–137; ADR-0001–0008, ADR-0027)*
 - **In-app voice recording** and **live streaming transcription** (above).
   *(ADR-0013, ADR-0014)*
 - **Live progress** over SSE (stage + %); refresh-safe elapsed timer.
+- **Accuracy measurement + tuning** — a local Turkish WER/CER/cpWER/DER eval harness
+  (`make eval`, FLEURS public benchmark + hand-labeled clinical set) drives
+  quick-win tuning: forced-`tr` default (accuracy-neutral, ~30% faster on large-v3),
+  speaker-count hints, and an opt-in Turkish clinical `initial_prompt` biasing seam.
+  *(REQ-135–139, REQ-167–170; ADR-0026, ADR-0027, ADR-0028)*
 
 ### Clinical notes
 - **Note generation** — transcript → structured **Turkish** clinical note via a

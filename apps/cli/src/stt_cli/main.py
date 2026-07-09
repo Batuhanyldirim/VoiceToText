@@ -57,9 +57,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Speech-to-text + speaker diarization (WhisperX)")
     ap.add_argument("audio", help="Path to an audio or video file (wav/mp3/m4a/mp4/mov/...)")
     ap.add_argument("--model", default="large-v3", help="Whisper model (default: large-v3)")
-    ap.add_argument("--language", default=None, help="Language code (e.g. en, tr). Default: auto-detect.")
+    ap.add_argument("--language", default="tr",
+                    help="Language code (e.g. tr, en). Default: tr. Pass 'auto' to auto-detect.")
     ap.add_argument("--min-speakers", type=int, default=None, help="Minimum number of speakers")
-    ap.add_argument("--max-speakers", type=int, default=None, help="Maximum number of speakers")
+    ap.add_argument("--max-speakers", type=int, default=2,
+                    help="Max speakers (default: 2 = doctor+patient; raise for a caregiver/interpreter)")
     ap.add_argument("--device", default="cpu", help="cpu (default on Mac; MPS unsupported by CTranslate2)")
     ap.add_argument("--compute-type", default="int8", help="int8 (CPU) / float16 / float32")
     ap.add_argument("--batch-size", type=int, default=8, help="Transcription batch size")

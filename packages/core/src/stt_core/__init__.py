@@ -8,6 +8,7 @@ Public API consumed by both the CLI (apps/cli) and the web API (apps/api):
 
 See specs/ (product/tech/design + ADRs) for the contract and rationale.
 """
+from .biasing import TR_CLINICAL_PROMPT, clinical_asr_options
 from .models import TranscribeOptions, TranscribeResult, Turn
 from .pipeline import MissingTokenError, transcribe
 from .progress import STAGES, ProgressEvent
@@ -22,4 +23,6 @@ __all__ = [
     "ProgressEvent",
     "STAGES",
     "MissingTokenError",
+    "TR_CLINICAL_PROMPT",
+    "clinical_asr_options",
 ]

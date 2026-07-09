@@ -1,0 +1,19 @@
+{
+  "name": "smoke-en",
+  "notes": "Committed, PHI-FREE smoke set: the synthetic 2-speaker conversation.wav produced by make_sample.sh (macOS 'say' voices). Ground truth is the exact script in make_sample.sh, so this manifest works on a fresh clone after `bash make_sample.sh`. It verifies the harness end-to-end WITHOUT any private audio. The REAL Turkish clinical reference set lives git-ignored under eval/data/ + its own manifest (eval/manifests/clinical-tr.json, not committed).",
+  "items": [
+    {
+      "id": "conversation",
+      "audio": "samples/conversation.wav",
+      "terms": ["project", "budget", "timeline", "meeting"],
+      "turns": [
+        {"speaker": "Speaker 1", "text": "Hello, and welcome to the meeting. Today we will discuss the new project."},
+        {"speaker": "Speaker 2", "text": "Thank you. I am really looking forward to getting started."},
+        {"speaker": "Speaker 1", "text": "I agree. So what do you think about the budget?"},
+        {"speaker": "Speaker 2", "text": "I think the budget is sufficient, but we should clarify the timeline a bit more."},
+        {"speaker": "Speaker 1", "text": "Great, then we can start next week. Thank you very much."},
+        {"speaker": "Speaker 2", "text": "Thank you as well. See you later, and have a good day."}
+      ]
+    }
+  ]
+}

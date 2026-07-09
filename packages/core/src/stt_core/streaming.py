@@ -26,7 +26,7 @@ import numpy as np
 from .diarize import _mute_version_warnings, load_diarizer
 from .fuse import assign_speakers_segment_level, build_turns
 from .models import TranscribeOptions, TranscribeResult
-from .pipeline import MissingTokenError
+from .pipeline import MissingTokenError, _count_real_speakers, _resolve_language
 from .progress import ProgressCallback, ProgressEvent, noop
 
 SAMPLE_RATE = 16000
@@ -101,7 +101,9 @@ class StreamingTranscriber:
         self._segments: list[dict] = []
         # Accumulated transcript words (overlap-deduped) — drives the live text.
         self._words: list[str] = []
-        self._language: Optional[str] = self.opts.language
+        # "tr" default; "auto"/"" -> detect (REQ-135). Resolve once up front so the
+        # forced language is consistent across every chunk and the aligner.
+        self._language: Optional[str] = _resolve_language(self.opts.language)
         self._finished = False
 
         # Lazily-loaded ASR model, kept warm across chunks.
@@ -119,8 +121,9 @@ class StreamingTranscriber:
         with _mute_version_warnings():
             self._asr = whisperx.load_model(
                 self.opts.model, self.opts.device,
-                compute_type=self.opts.compute_type, language=self.opts.language,
+                compute_type=self.opts.compute_type, language=self._language,
                 vad_options={"vad_onset": self.opts.vad_onset},
+                asr_options=self.opts.asr_options,  # biasing seam (ADR-0028)
             )
 
     # --- ingest --------------------------------------------------------------
@@ -248,7 +251,7 @@ class StreamingTranscriber:
         return TranscribeResult(
             audio=self.audio_name,
             language=self._language,
-            num_speakers=len(speaker_map),
+            num_speakers=_count_real_speakers(speaker_map),
             speaker_map=speaker_map,
             turns=turns,
             segments=segments,

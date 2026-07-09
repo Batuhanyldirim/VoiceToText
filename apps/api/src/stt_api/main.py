@@ -116,9 +116,11 @@ def health() -> dict:
 @app.post("/jobs", status_code=202)
 async def create_job(
     file: UploadFile = File(...),
-    language: Optional[str] = Form(None),
+    # Turkish by default (REQ-135); send "auto" to auto-detect, or another code.
+    language: Optional[str] = Form("tr"),
     min_speakers: Optional[int] = Form(None),
-    max_speakers: Optional[int] = Form(None),
+    # Soft cap of 2 (doctor+patient) by default (REQ-136); raise for a caregiver.
+    max_speakers: Optional[int] = Form(2),
     diarize: bool = Form(True),
     model: str = Form("large-v3"),
 ) -> dict:
@@ -156,8 +158,10 @@ async def create_job(
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(400, "empty file")
 
+    # Pass language through verbatim; the pipeline's _resolve_language() maps
+    # "auto"/"" -> auto-detect and forwards "tr"/"en"/... as a forced language.
     opts = TranscribeOptions(
-        model=model, language=language or None,
+        model=model, language=language,
         diarize=diarize, min_speakers=min_speakers, max_speakers=max_speakers,
         hf_token=hf_token,
     )
@@ -263,9 +267,9 @@ def download(job_id: str, fmt: str):
 
 @app.post("/stream", status_code=201)
 async def open_stream(
-    language: Optional[str] = Form(None),
+    language: Optional[str] = Form("tr"),          # Turkish default (REQ-135); "auto" to detect
     min_speakers: Optional[int] = Form(None),
-    max_speakers: Optional[int] = Form(None),
+    max_speakers: Optional[int] = Form(2),         # soft doctor+patient cap (REQ-136)
     diarize: bool = Form(True),
     model: str = Form("large-v3"),
     name: str = Form("kayit"),
@@ -281,7 +285,7 @@ async def open_stream(
     # Streaming skips whole-file enhancement (REQ-131) — incremental chunks can't
     # get the whole-file leveling pass; the batch record/upload path keeps it.
     opts = TranscribeOptions(
-        model=model, language=language or None, diarize=diarize,
+        model=model, language=language, diarize=diarize,
         min_speakers=min_speakers, max_speakers=max_speakers,
         enhance=False, hf_token=hf_token,
     )

@@ -33,12 +33,16 @@ EARS patterns used:
   model, diarize, and write `<stem>.txt`, `<stem>.srt`, and `<stem>.json` into
   `out/`.
 - **REQ-011** (Ubiquitous) — THE SYSTEM SHALL default to `--model large-v3`,
-  `--device cpu`, `--compute-type int8`, `--vad-onset 0.35`, enhancement ON, and
-  diarization ON.
-- **REQ-012** (State) — WHILE no `--language` is given, THE SYSTEM SHALL detect
-  the language from the audio and report it.
-- **REQ-013** (State) — WHILE neither `--min-speakers` nor `--max-speakers` is
-  given, THE SYSTEM SHALL determine the speaker count automatically.
+  `--device cpu`, `--compute-type int8`, `--vad-onset 0.35`, enhancement ON,
+  diarization ON, `--language tr`, and `--max-speakers 2`. *(language/speaker
+  defaults → REQ-135/REQ-136, ADR-0027)*
+- **REQ-012** (State) — WHILE `--language auto` (or an empty value) is given, THE
+  SYSTEM SHALL detect the language from the audio and report it; WHILE an explicit
+  code is given (default `tr`), it SHALL force that language. *(→ REQ-135)*
+- **REQ-013** (State) — WHILE `--max-speakers` is given (default 2), THE SYSTEM
+  SHALL cap diarization at that many speakers as a SOFT upper bound (a genuine
+  monologue still yields one speaker); WHILE `--min-speakers`/`--max-speakers` are
+  cleared, it SHALL determine the count automatically. *(→ REQ-136)*
 
 ## Platform constraint
 
@@ -613,6 +617,62 @@ Editing a note should never lose work, and prior versions should be recoverable.
 
 ---
 
+## Turkish transcription accuracy — Phase 1 quick wins (→ ADR-0027, ADR-0028)
+
+- **REQ-135** (Ubiquitous) — THE SYSTEM SHALL default the transcription language to
+  **Turkish (`tr`)** rather than auto-detect, because the audio is Turkish clinical
+  encounters and a mis-detect (auto-detect reads only the first ~30 s) decodes the
+  whole file in the wrong language and skips the Turkish aligner. An explicit
+  `language` (including `auto` to restore detection) SHALL override it.
+  Benchmarked accuracy-neutral on clean audio and ~30 % faster on large-v3.
+- **REQ-136** (Ubiquitous) — THE SYSTEM SHALL default diarization to a **soft cap of
+  2 speakers** (doctor + patient), overridable upward for a caregiver/interpreter.
+  It SHALL NOT hardcode an exact count (a genuine monologue still yields one
+  speaker). This reduces pyannote over-splitting a quiet/far patient into phantom
+  speakers.
+- **REQ-137** (Ubiquitous) — `TranscribeResult.num_speakers` SHALL count only
+  genuine diarization speakers and SHALL exclude the `"?"` placeholder inserted for
+  unattributed segments, so a run that merged all speech into one speaker does not
+  falsely report ≥ 2. *(supersedes the false-pass noted at REQ-170)*
+- **REQ-138** (Event) — WHEN a caller supplies `asr_options` (a dict forwarded to
+  the faster-whisper decoder via `whisperx.load_model`), THE SYSTEM SHALL apply them
+  (e.g. `initial_prompt`, `hotwords`). This biasing seam SHALL be **off by default**
+  (`asr_options=None`). *(→ ADR-0028)*
+- **REQ-139** (Ubiquitous) — THE SYSTEM SHALL ship a committed Turkish clinical
+  `initial_prompt` preset (`stt_core.biasing.TR_CLINICAL_PROMPT`) that a caller may
+  opt into via `asr_options`; it SHALL be short, name no specific drugs/doses, and
+  its effect SHALL be A/B-verified (asserting the prompt text never appears verbatim
+  in output) before being enabled by default. *(→ ADR-0028)*
+
+## Turkish transcription accuracy evaluation (→ ADR-0026)
+
+- **REQ-167** (Ubiquitous) — THE SYSTEM SHALL provide a **local, dev-only**
+  evaluation harness (`stt-eval`, `packages/eval/`) that scores transcription
+  output against a fixed reference set and reports **WER**, **CER**, medical
+  **term recall**, **cpWER**, and **DER** (the last when the reference has
+  timestamps). All scoring SHALL run on-device (PHI stays local, ADR-0003) and
+  SHALL NOT move the load-bearing pins (`jiwer` is an optional extra —
+  `uv sync --extra eval`; `pyannote.metrics` is already present; ADR-0002).
+- **REQ-168** (Ubiquitous) — THE SYSTEM SHALL normalize text for scoring with a
+  **Turkish-correct** normalizer: casefold using the dotted/dotless-i rule
+  (`İ→i`, `I→ı` before lowercasing), **preserve** the Turkish diacritics
+  `ç ğ ı ş ö ü` (never strip them), and join suffix apostrophes
+  (`İstanbul'da` == `istanbulda`) — applied identically to reference and
+  hypothesis.
+- **REQ-169** (Event) — WHEN the harness is run with two named configs
+  (`make eval m=<manifest> c="A B"`), THE SYSTEM SHALL transcribe each reference
+  item under each config (importing `stt_core`, ADR-0007; caching by audio +
+  options hash), score it, and print a per-metric **A-vs-B delta** with an
+  improved/worse verdict (lower is better for WER/CER/DER/cpWER; higher for term
+  recall). The heavy `run` path SHALL NOT be part of the fast `make test` suite;
+  the pure normalizer + scorers SHALL be unit-tested there (ADR-0017).
+- **REQ-170** (Ubiquitous) — THE `num_speakers` count SHALL NOT include the
+  `None → "?"` placeholder (`fuse.py`/`pipeline.py`), so a run that merged all
+  speech into one speaker does not falsely report ≥ 2 speakers; cpWER (REQ-167)
+  is the durable regression guard for merged/​swapped-speaker diarization.
+
+---
+
 ## Verification gate
 
 The behavioral acceptance test (no unit suite — see
@@ -628,6 +688,12 @@ transcribe samples/conversation.wav        # the stt-cli console script (was: py
 **≥ 2 distinct `Speaker N`** turns with plausible text (REQ-060). This exercises
 REQ-001/010/011/040/060/070/071 end-to-end. The web path (REQ-090–097) passes the
 same gate by uploading the sample and confirming `result.num_speakers ≥ 2`.
+
+> **Caveat — a green gate ≠ good accuracy.** This gate measures no text accuracy
+> and, until REQ-170 lands, `num_speakers` can falsely report 2 on a run that
+> merged both speakers into one (the `None → "?"` placeholder is counted). For a
+> real accuracy signal use the `stt-eval` harness (REQ-167–170, ADR-0026):
+> `make eval` / `make eval-smoke`, which reports WER/CER/cpWER/DER.
 
 **Note generation (REQ-100–106)** passes when, with `ollama serve` running
 (models under `OLLAMA_MODELS`), generating a note from that transcript on the

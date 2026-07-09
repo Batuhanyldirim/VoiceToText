@@ -20,8 +20,11 @@ note-core = { workspace = true }
 [dependency-groups]
 dev = ["pytest>=8.0"]
 
-# Test config: tests live under apps/api/tests. httpx (already a FastAPI dep)
-# backs FastAPI's TestClient; no ML models are imported by these tests.
+# Test config. httpx (a FastAPI dep) backs the API TestClient; no ML models are
+# imported by any of these tests, so the whole suite still runs in seconds:
+#  - apps/api/tests: SQLite store + note/patient endpoints (ADR-0017)
+#  - packages/eval/tests: the Turkish normalizer + WER/CER/cpWER scorers (pure
+#    Python; jiwer + pyannote.metrics only, no torch/whisperx).
 [tool.pytest.ini_options]
-testpaths = ["apps/api/tests"]
+testpaths = ["apps/api/tests", "packages/eval/tests", "packages/core/tests"]
 addopts = "-q"

@@ -52,6 +52,18 @@ apps/api/notes.db
 apps/api/note_audio/
 note_audio/
 
+# ─── Eval harness: PHI reference data + transcription cache (NEVER commit) ─
+# The committed smoke manifest (eval/manifests/smoke-en.json) + code are fine;
+# the real Turkish CLINICAL reference set (hand-corrected real encounters) is
+# PHI and lives here, git-ignored, alongside a git-ignored clinical manifest.
+# The transcription cache holds transcript text derived from that audio.
+eval/data/
+eval/cache/
+eval/manifests/clinical-tr.json
+# Public benchmark ingested locally (FLEURS tr WAVs are large; regenerate via
+# stt_eval.ingest_fleurs). CC-BY data + its generated manifest stay out of git.
+eval/manifests/fleurs-tr.json
+
 # ─── Machine-local, non-committed integrations ────────────────────────────
 # Optional local note-provider plugin + its enablement. Kept out of git so the
 # committed repo offers only the local (Ollama) provider and carries no

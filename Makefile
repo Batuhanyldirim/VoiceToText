@@ -4,7 +4,7 @@
 
 PY := /opt/homebrew/opt/python@3.11/bin/python3.11
 
-.PHONY: help setup api api-dev web cli sample verify test clean
+.PHONY: help setup api api-dev web cli sample verify test eval eval-smoke clean
 
 help:
 	@echo "Targets:"
@@ -16,6 +16,8 @@ help:
 	@echo "  make sample   - generate samples/conversation.wav"
 	@echo "  make verify   - run the CLI on the sample and check >=2 speakers"
 	@echo "  make test     - run the fast store + API pytest suite (no ML models)"
+	@echo "  make eval m=... c=\"baseline tr-2spk\" - A/B transcription accuracy (WER/CER/DER/cpWER)"
+	@echo "  make eval-smoke - run eval on the committed PHI-free smoke set (needs samples/conversation.wav)"
 	@echo "  make clean    - see cleanup.sh (rm -rf the repo removes everything)"
 
 setup:
@@ -65,6 +67,26 @@ verify:
 # seconds — the pipeline itself stays under `make verify` (the behavioral gate).
 test:
 	.venv/bin/python -m pytest
+
+# Turkish transcription accuracy A/B (WER/CER + term recall + DER/cpWER).
+# Unlike `make verify` (which only checks >=2 speakers — and gives FALSE PASSES
+# on merged-speaker runs), this measures real accuracy against a reference set.
+# LOADS ML MODELS — slow (large-v3 ~= 0.8x realtime); results are cached in
+# eval/cache/. Sources env.sh for HF_TOKEN (diarization) + in-project caches.
+#   make eval m=eval/manifests/clinical-tr.json c="baseline tr-2spk"
+# c = space-separated config names (1st is the A/B baseline); see stt_eval/configs.py.
+m ?= eval/manifests/smoke-en.json
+c ?= baseline
+eval:
+	. ./env.sh && .venv/bin/python -m stt_eval run --manifest $(m) \
+		$(foreach cfg,$(c),--config $(cfg)) --per-item
+
+# Smoke: run the harness end-to-end on the committed PHI-free synthetic set.
+# Generates the sample first if missing. Proves the wiring works on a fresh clone.
+eval-smoke:
+	@test -f samples/conversation.wav || bash make_sample.sh
+	. ./env.sh && .venv/bin/python -m stt_eval run \
+		--manifest eval/manifests/smoke-en.json --config baseline --per-item
 
 clean:
 	bash cleanup.sh

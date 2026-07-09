@@ -190,11 +190,14 @@ Three conveniences layer on top:
 
 Two layers (→ [`ADR-0017`](specs/adr/0017-pytest-store-and-api-suite.md)):
 
-**1. `make test`** — the fast pytest suite (`apps/api/tests/`) for the pure-Python
-store + API layer (migrations, note edit/finalize lifecycle, patient organization,
-endpoint status codes). No ML models; runs in <1 s; uses a **temp DB** (never the
-real `apps/api/notes.db`). Run it after any change to `store.py` / the note+patient
-endpoints, and add a test with new store/endpoint logic.
+**1. `make test`** — the fast pytest suite for the pure-Python layers. No ML
+models; runs in <3.5 s; the store tests use a **temp DB** (never the real
+`apps/api/notes.db`). Two test roots (`testpaths` in the root `pyproject.toml`):
+`apps/api/tests/` (store migrations, note edit/finalize lifecycle, patient
+organization, endpoint status codes) and `packages/eval/tests/` (the Turkish
+normalizer + WER/CER/cpWER scorers — jiwer + pyannote.metrics only, no torch). Run
+it after any change to `store.py` / the note+patient endpoints or `stt_eval`, and
+add a test with new store/endpoint/scoring logic.
 
 **2. The behavioral pipeline gate** (the ML models are too slow/nondeterministic
 to unit-test):
@@ -208,7 +211,11 @@ transcribe samples/conversation.wav               # add --model small to go ~4x 
 **PASS** = a transcript with **≥ 2 distinct `Speaker N` labels** and sensible
 text. Via the CLI: check `out/conversation.txt`. Via the API: upload the sample
 and confirm `result.num_speakers ≥ 2` (poll `GET /jobs/{id}`). Any pipeline change
-must still pass this gate.
+must still pass this gate. **Caveat:** this gate measures no text accuracy and can
+false-pass on merged speakers (`num_speakers` counts the `None→"?"` placeholder).
+For a real Turkish accuracy signal use the **`stt-eval` harness** (WER/CER/cpWER/
+DER; `make eval` / `make eval-smoke`; `uv sync --extra eval`) — see
+[`ADR-0026`](specs/adr/0026-turkish-accuracy-eval-harness.md) + [`packages/eval/README.md`](packages/eval/README.md).
 
 **Note gate:** with `ollama serve` running, generating a note from that
 transcript on the default local provider must produce a **Turkish** note in the

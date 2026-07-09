@@ -23,6 +23,30 @@ class MissingTokenError(RuntimeError):
     """Raised when diarization is requested but no HF token is available."""
 
 
+def _resolve_language(language: Optional[str]) -> Optional[str]:
+    """Map a TranscribeOptions.language value to what whisperx expects.
+
+    The default is "tr" (REQ-135), but callers can still opt into auto-detection
+    by passing "auto" (or an empty string). whisperx treats `None` as auto-detect,
+    so we translate those sentinels to None; any other value (e.g. "tr", "en") is
+    forwarded as an explicit forced language.
+    """
+    if language is None:
+        return None
+    lang = language.strip().lower()
+    if lang in ("", "auto", "detect", "auto-detect"):
+        return None
+    return lang
+
+
+def _count_real_speakers(speaker_map: dict) -> int:
+    """Number of genuine speakers in the map, EXCLUDING the '?' placeholder that
+    fuse.speaker_name() inserts for segments diarization couldn't attribute
+    (raw None). Counting '?' inflated num_speakers and let a run that merged both
+    speakers into one still report 2 (REQ-170, ADR-0027)."""
+    return sum(1 for raw in speaker_map if raw != "?")
+
+
 def transcribe(
     input_path: Path,
     opts: Optional[TranscribeOptions] = None,
@@ -49,6 +73,7 @@ def transcribe(
     import whisperx  # lazy
 
     device = opts.device
+    language = _resolve_language(opts.language)  # "tr" default; "auto"/"" -> detect
 
     # --- Stage 1: enhance (default on) ---
     load_from = input_path
@@ -65,15 +90,16 @@ def transcribe(
     # spam via raw print(); mute it (same filter as the diarizer load).
     with _mute_version_warnings():
         asr = whisperx.load_model(
-            opts.model, device, compute_type=opts.compute_type, language=opts.language,
+            opts.model, device, compute_type=opts.compute_type, language=language,
             vad_options={"vad_onset": opts.vad_onset},
+            asr_options=opts.asr_options,  # biasing seam (initial_prompt/hotwords); ADR-0028
         )
     progress(ProgressEvent(stage="transcribe", percent=0.0))
     with capture_transcribe_progress(progress):
         result = asr.transcribe(
-            audio, batch_size=opts.batch_size, language=opts.language, print_progress=True
+            audio, batch_size=opts.batch_size, language=language, print_progress=True
         )
-    language = result.get("language", opts.language)
+    language = result.get("language", language)
     log(f"  -> {len(result.get('segments', []))} raw segments (language: {language})")
 
     # --- Stage 3: align (best-effort per language) ---
@@ -111,7 +137,7 @@ def transcribe(
     return TranscribeResult(
         audio=str(input_path),
         language=language,
-        num_speakers=len(speaker_map),
+        num_speakers=_count_real_speakers(speaker_map),
         speaker_map=speaker_map,
         turns=turns,
         segments=segments,
