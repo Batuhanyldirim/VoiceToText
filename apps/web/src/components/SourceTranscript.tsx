@@ -3,33 +3,47 @@ import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Alert,
   Box,
+  Button,
   Chip,
+  IconButton,
   Stack,
+  TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import type { Turn } from "../types";
-import { API } from "../config/api";
+import EditRoundedIcon from "@mui/icons-material/EditRounded";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import type { Note, Turn } from "../types";
+import { API, correctTurn } from "../config/api";
 import { formatTimestamp, speakerColor } from "../utils/format";
 
-// "Kaynak deşifre" panel (ADR-0019): the note's source transcript turns, and —
-// when the recording is available — an embedded player where clicking a turn
-// seeks/plays that moment. Lets a clinician verify an ambiguous passage against
-// the original audio without leaving the note. Degrades to transcript-only when
-// there's no audio (reused/old notes).
+// "Kaynak deşifre" panel (ADR-0019 + ADR-0029): the note's source transcript turns,
+// and — when the recording is available — an embedded player where clicking a turn
+// seeks/plays that moment. A clinician can verify an ambiguous passage against the
+// original audio AND correct the turn text INLINE right here (reusing the
+// PATCH /notes/{id}/turns path from the review page) — no need to leave the note.
+// Degrades to transcript-only when there's no audio (reused/old notes).
 
 interface SourceTranscriptProps {
   noteId: string;
   turns: Turn[];
   hasAudio: boolean;
+  /** Called after a turn is corrected so the parent can sync its own turns state. */
+  onTurnsChange?: (turns: Turn[]) => void;
 }
 
-export default function SourceTranscript({ noteId, turns, hasAudio }: SourceTranscriptProps) {
+export default function SourceTranscript({ noteId, turns, hasAudio, onTurnsChange }: SourceTranscriptProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   if (!turns || turns.length === 0) return null;
 
@@ -43,6 +57,36 @@ export default function SourceTranscript({ noteId, turns, hasAudio }: SourceTran
     void el.play().catch(() => {
       /* autoplay may be blocked; the user can press play */
     });
+  };
+
+  const startEdit = (turn: Turn, idx: number) => {
+    setEditingIdx(idx);
+    setDraft(turn.text);
+    setErr(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingIdx(null);
+    setErr(null);
+  };
+
+  const saveEdit = async (idx: number) => {
+    if (draft.trim() === turns[idx].text.trim()) {
+      cancelEdit();
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      const updated: Note = await correctTurn(noteId, idx, draft.trim());
+      // Sync the parent (NoteViewer) with the server's authoritative turns.
+      if (updated.turns) onTurnsChange?.(updated.turns);
+      setEditingIdx(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Kaydedilemedi");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -95,7 +139,7 @@ export default function SourceTranscript({ noteId, turns, hasAudio }: SourceTran
               }}
             />
             <Typography variant="caption" color="text.secondary">
-              İpucu: sesi o ana götürmek için bir konuşmaya tıklayın.
+              İpucu: sesi o ana götürmek için bir konuşmaya tıklayın; metni düzeltmek için ✎ simgesine dokunun.
             </Typography>
           </Box>
         )}
@@ -105,32 +149,21 @@ export default function SourceTranscript({ noteId, turns, hasAudio }: SourceTran
             const color = speakerColor(turn.speaker || "");
             const clickable = hasAudio && typeof turn.start === "number";
             const active = i === activeIdx;
+            const isEditing = i === editingIdx;
             return (
               <Box
                 key={`${turn.start ?? i}-${i}`}
-                role={clickable ? "button" : undefined}
-                tabIndex={clickable ? 0 : undefined}
-                onClick={clickable ? () => seekTo(turn, i) : undefined}
-                onKeyDown={
-                  clickable
-                    ? (e) => {
-                        if (e.key === "Enter" || e.key === " ") seekTo(turn, i);
-                      }
-                    : undefined
-                }
                 sx={{
                   display: "flex",
                   gap: 1,
                   p: 1,
                   borderRadius: 1.5,
-                  cursor: clickable ? "pointer" : "default",
-                  bgcolor: active ? "primary.light" : "transparent",
+                  bgcolor: active
+                    ? "primary.light"
+                    : turn.corrected
+                      ? "rgba(76,175,80,0.08)"
+                      : "transparent",
                   transition: "background-color .15s",
-                  "&:hover": clickable ? { bgcolor: active ? "primary.light" : "action.hover" } : {},
-                  outline: "none",
-                  "&:focus-visible": clickable
-                    ? { boxShadow: (t) => `0 0 0 2px ${t.palette.primary.main}` }
-                    : {},
                 }}
               >
                 <Box sx={{ flexShrink: 0, minWidth: 92 }}>
@@ -148,10 +181,86 @@ export default function SourceTranscript({ noteId, turns, hasAudio }: SourceTran
                       {formatTimestamp(turn.start)}
                     </Typography>
                   )}
+                  <Stack direction="row" spacing={0.25} sx={{ mt: 0.5 }}>
+                    {clickable && !isEditing && (
+                      <Tooltip title="Sesde bu ana git">
+                        <IconButton
+                          size="small"
+                          onClick={() => seekTo(turn, i)}
+                          color={active ? "primary" : "default"}
+                        >
+                          <PlayArrowRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {!isEditing && (
+                      <Tooltip title="Metni düzelt">
+                        <IconButton size="small" onClick={() => startEdit(turn, i)}>
+                          <EditRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {turn.corrected && !isEditing && (
+                      <Tooltip title="Bu konuşma düzeltildi">
+                        <CheckCircleRoundedIcon color="success" fontSize="small" sx={{ mt: 0.5 }} />
+                      </Tooltip>
+                    )}
+                  </Stack>
                 </Box>
-                <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
-                  {turn.text}
-                </Typography>
+
+                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                  {isEditing ? (
+                    <Stack spacing={1}>
+                      <TextField
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        multiline
+                        fullWidth
+                        size="small"
+                        autoFocus
+                        disabled={saving}
+                      />
+                      {err && <Alert severity="error">{err}</Alert>}
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => saveEdit(i)}
+                          disabled={saving}
+                        >
+                          {saving ? "Kaydediliyor…" : "Kaydet"}
+                        </Button>
+                        <Button size="small" onClick={cancelEdit} disabled={saving}>
+                          Vazgeç
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  ) : (
+                    <Box
+                      role={clickable ? "button" : undefined}
+                      tabIndex={clickable ? 0 : undefined}
+                      onClick={clickable ? () => seekTo(turn, i) : undefined}
+                      onKeyDown={
+                        clickable
+                          ? (e) => {
+                              if (e.key === "Enter" || e.key === " ") seekTo(turn, i);
+                            }
+                          : undefined
+                      }
+                      sx={{
+                        cursor: clickable ? "pointer" : "default",
+                        outline: "none",
+                        "&:focus-visible": clickable
+                          ? { boxShadow: (t) => `0 0 0 2px ${t.palette.primary.main}`, borderRadius: 1 }
+                          : {},
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
+                        {turn.text}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
               </Box>
             );
           })}

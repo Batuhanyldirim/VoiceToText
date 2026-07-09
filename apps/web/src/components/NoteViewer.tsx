@@ -1078,7 +1078,12 @@ export default function NoteViewer({
           {/* Source transcript with click-to-seek audio (ADR-0019). Shown when
               the note carries turns; the player appears only if audio exists. */}
           {!editing && turns.length > 0 && (
-            <SourceTranscript noteId={noteId} turns={turns} hasAudio={hasAudio} />
+            <SourceTranscript
+              noteId={noteId}
+              turns={turns}
+              hasAudio={hasAudio}
+              onTurnsChange={setTurns}
+            />
           )}
         </>
       )}

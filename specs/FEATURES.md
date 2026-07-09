@@ -100,7 +100,9 @@ The success gate: a transcript with **≥ 2 distinct speakers**. CPU-only by des
 - **Audio-linked source transcript** — the note page has a **"Kaynak deşifre"**
   panel: the source turns with timestamps, and (when the recording is kept) a
   player where **clicking a turn plays that moment** — verify an ambiguous passage
-  against the original audio. *(REQ-143–146; ADR-0019)*
+  against the original audio, **and correct that turn's text inline right there**
+  (same `PATCH /notes/{id}/turns` path as the review page; resolves any STT-flag on
+  the turn, never touches the note body). *(REQ-143–146, REQ-174; ADR-0019, ADR-0029)*
 - **Speaker re-assignment for merged diarization** — when acoustic diarization
   collapses two similar voices (rapid doctor↔patient Q&A) into one speaker, a
   **"Konuşmacıları yeniden ata"** action on the review page uses the **local LLM's
