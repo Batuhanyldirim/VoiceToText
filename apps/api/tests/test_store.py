@@ -75,6 +75,37 @@ def test_correct_turn_missing_note_returns_none(store):
     assert store.update_transcript_turn("nope", 0, "x") is None
 
 
+def test_correct_turn_flag_scoped_resolves_only_that_flag(store):
+    # Two flags on the SAME turn — a scoped correction must resolve ONLY flag 0.
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    store.set_review_flags("n1", [
+        {"quote": "500 mg", "turn_index": 1, "category": "doz"},
+        {"quote": "parasetamol", "turn_index": 1, "category": "ilaç"},
+    ])
+    store.update_transcript_turn("n1", 1, "Günde 50 mg parasetamol.",
+                                 flag_index=0, new_quote="50 mg")
+    flags = store.get("n1").review_flags
+    assert flags[0]["resolved"] is True and flags[0]["resolution"] == "corrected"
+    assert flags[0]["quote"] == "50 mg"                 # re-anchored to the corrected phrase
+    assert flags[1].get("resolved") in (None, False)    # sibling flag stays open
+
+
+def test_correct_turn_flag_scoped_reedit(store):
+    # A corrected flag can be corrected AGAIN (fix a typo in the edit); quote
+    # re-anchors each time so the next edit locates the current text.
+    make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
+    store.set_review_flags("n1", [{"quote": "500 mg parasetamol", "turn_index": 1}])
+    store.update_transcript_turn("n1", 1, "Günde 5 mg parasetamol.",
+                                 flag_index=0, new_quote="5 mg parasetamol")
+    assert store.get("n1").review_flags[0]["quote"] == "5 mg parasetamol"
+    # re-edit
+    store.update_transcript_turn("n1", 1, "Günde 50 mg parasetamol.",
+                                 flag_index=0, new_quote="50 mg parasetamol")
+    f = store.get("n1").review_flags[0]
+    assert f["quote"] == "50 mg parasetamol" and f["resolved"] is True
+    assert store.get("n1").turns[1]["text"] == "Günde 50 mg parasetamol."
+
+
 def test_correct_turn_tags_resolution_corrected(store):
     make_saved_note(store, transcript_json=json.dumps(_turns(), ensure_ascii=False))
     store.set_review_flags("n1", [{"quote": "500 mg parasetamol", "turn_index": 1}])

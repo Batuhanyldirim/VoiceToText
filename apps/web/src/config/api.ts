@@ -245,17 +245,27 @@ export async function rediarizeNote(id: string, signal?: AbortSignal): Promise<N
 
 /** Correct a single source-transcript turn after verifying it against the audio
  * (ADR-0029). Fixes only the transcript turn + resolves its STT-review flag;
- * never touches the note body. Returns the updated note. */
+ * never touches the note body. Returns the updated note.
+ *
+ * When the edit came from a single flag, pass its `flagIndex` + `newQuote` (the
+ * corrected phrase): only that flag resolves and its quote re-anchors to the new
+ * text, so it can be re-edited later. Omit for a full-turn edit. */
 export async function correctTurn(
   id: string,
   turnIndex: number,
   text: string,
+  opts?: { flagIndex?: number; newQuote?: string },
   signal?: AbortSignal,
 ): Promise<Note> {
   const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/turns`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ turn_index: turnIndex, text }),
+    body: JSON.stringify({
+      turn_index: turnIndex,
+      text,
+      ...(opts?.flagIndex != null ? { flag_index: opts.flagIndex } : {}),
+      ...(opts?.newQuote != null ? { new_quote: opts.newQuote } : {}),
+    }),
     signal,
   });
   return asJson<Note>(res);

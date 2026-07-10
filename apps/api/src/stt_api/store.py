@@ -523,13 +523,21 @@ class NoteStore:
         note.review_flags_json = fj
         return note
 
-    def update_transcript_turn(self, note_id: str, turn_index: int, text: str
+    def update_transcript_turn(self, note_id: str, turn_index: int, text: str,
+                               flag_index: Optional[int] = None,
+                               new_quote: Optional[str] = None,
                                ) -> Optional[SavedNote]:
-        """Correct a single transcript turn's text in place (ADR-0029) and, if a
-        review flag pointed at that turn, mark it resolved so the UI can show it
-        was verified. Corrects only the TURN text (the transcript), never the note
-        body — the note stays the AI original + the clinician's separate note
-        overlay (ADR-0015). Returns None if the note/turn is missing.
+        """Correct a single transcript turn's text in place (ADR-0029) and mark the
+        relevant review flag(s) resolved so the UI shows it was verified. Corrects
+        only the TURN text (the transcript), never the note body (ADR-0015). Returns
+        None if the note/turn is missing.
+
+        Flag scoping: when `flag_index` is given, ONLY that flag is resolved and its
+        `quote` is re-anchored to `new_quote` (the corrected phrase) — so the doctor
+        can re-edit it later (the flag still points at the current text) and the
+        OTHER flags on the same turn stay open. When `flag_index` is None (a
+        full-turn edit from the transcript view), every open flag on the turn is
+        resolved, as before.
 
         This is how a doctor manually fixes an STT error against the audio: the
         corrected transcript is what feeds re-extraction and any future training
@@ -543,15 +551,25 @@ class NoteStore:
             return None
         turns[turn_index] = {**turns[turn_index], "text": text, "corrected": True}
         tj = json.dumps(turns, ensure_ascii=False)
-        # Mark any flag anchored to this turn as resolved (kept, not deleted, so the
-        # doctor still sees what was reviewed).
+        # Resolve the relevant flag(s), kept (not deleted) so the doctor still sees
+        # what was reviewed and can re-open/re-edit it.
         flags = note.review_flags
         changed = False
-        for f in flags:
-            if f.get("turn_index") == turn_index and not f.get("resolved"):
-                f["resolved"] = True
-                f["resolution"] = "corrected"
-                changed = True
+        if flag_index is not None and 0 <= flag_index < len(flags):
+            f = flags[flag_index]
+            f["resolved"] = True
+            f["resolution"] = "corrected"
+            # Re-anchor the flag to the corrected phrase so a later re-edit locates
+            # the CURRENT text, not the stale original mistranscription.
+            if new_quote:
+                f["quote"] = new_quote
+            changed = True
+        elif flag_index is None:
+            for f in flags:
+                if f.get("turn_index") == turn_index and not f.get("resolved"):
+                    f["resolved"] = True
+                    f["resolution"] = "corrected"
+                    changed = True
         fj = json.dumps(flags, ensure_ascii=False) if changed else None
         with self._connect() as conn:
             conn.execute(

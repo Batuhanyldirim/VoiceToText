@@ -332,20 +332,26 @@ export default function TranscriptReviewPage({ noteId }: Props) {
 
   // Correct a flag's phrase in place: replace the flagged quote inside its turn
   // with `newPhrase`, then persist the whole turn (reuses the same turn-correction
-  // path + flag resolution as ADR-0029). Keeps the surrounding turn text intact.
+  // path as ADR-0029). Keeps the surrounding turn text intact. Scoped to THIS flag
+  // (flagIndex): only it resolves and its quote re-anchors to `newPhrase`, so it
+  // can be re-edited later (fix a typo in the edit) and sibling flags on the same
+  // merged turn stay open.
   const correctFlagPhrase = useCallback(
-    async (turnIndex: number, quote: string, newPhrase: string): Promise<boolean> => {
+    async (flagIndex: number, turnIndex: number, quote: string, newPhrase: string): Promise<boolean> => {
       const turn = turns[turnIndex];
       if (!turn) return false;
       const range = findQuoteRange(turn.text || "", quote);
       const oldText = turn.text || "";
       const newText = range
-        ? oldText.slice(0, range[0]) + newPhrase + oldText.slice(range[1])
-        : // no located range (shouldn't happen for a located flag) — leave text, just
-          // let the caller fall back; return false so the UI keeps the phrase editor open.
+        ? oldText.slice(0, range[0]) + newPhrase.trim() + oldText.slice(range[1])
+        : // no located range (shouldn't happen for a located flag) — return false so
+          // the UI keeps the phrase editor open with an explanatory error.
           null;
-      if (newText === null || newText.trim() === oldText.trim()) return false;
-      const updated = await correctTurn(noteId, turnIndex, newText.trim());
+      if (newText === null) return false;
+      const updated = await correctTurn(noteId, turnIndex, newText.trim(), {
+        flagIndex,
+        newQuote: newPhrase.trim(),
+      });
       setNote(updated);
       setToast("Düzeltme kaydedildi.");
       return true;
@@ -509,7 +515,7 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                     onToggle={(resolved) => onToggleFlag(i, resolved)}
                     onCorrectPhrase={
                       typeof f.turn_index === "number"
-                        ? (newPhrase) => correctFlagPhrase(f.turn_index!, f.quote, newPhrase)
+                        ? (newPhrase) => correctFlagPhrase(i, f.turn_index!, f.quote, newPhrase)
                         : undefined
                     }
                   />
@@ -739,8 +745,10 @@ function FlagCard({
         {!editing && (
           <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", flexShrink: 0 }}>
             {playButton}
-            {!flag.resolved && onCorrectPhrase ? (
-              <Tooltip title="Bu ifadeyi düzelt">
+            {/* Edit is available while OPEN and after a CORRECTION (to fix a typo in
+                the edit) — but not for a merely-acknowledged flag (nothing to fix). */}
+            {onCorrectPhrase && !acknowledged ? (
+              <Tooltip title={corrected ? "Düzeltmeyi tekrar düzenle" : "Bu ifadeyi düzelt"}>
                 <IconButton size="small" onClick={startEdit}>
                   <EditRoundedIcon fontSize="small" />
                 </IconButton>

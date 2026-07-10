@@ -829,18 +829,27 @@ def edit_note(note_id: str, body: NoteEditBody) -> dict:
 class TurnCorrectionBody(BaseModel):
     turn_index: int
     text: str
+    # Optional flag-scoped correction (ADR-0029): when the edit came from a single
+    # review flag, resolve ONLY that flag and re-anchor its quote to `new_quote`
+    # (the corrected phrase) so it can be re-edited later. Omit for a full-turn edit
+    # from the transcript view (resolves all open flags on the turn, as before).
+    flag_index: Optional[int] = None
+    new_quote: Optional[str] = None
 
 
 @app.patch("/notes/{note_id}/turns")
 def correct_transcript_turn(note_id: str, body: TurnCorrectionBody) -> dict:
     """Correct a single source-transcript turn's text after the doctor verified it
     against the audio (ADR-0029). Fixes ONLY the transcript turn (marks it
-    `corrected` + resolves any STT-review flag on that turn); never touches the note
+    `corrected` + resolves the relevant STT-review flag(s)); never touches the note
     body. 404 if the note or turn index is unknown. This is the manual STT-error
     correction path — the corrected turn is a real, human-verified label."""
     if body.text is None:
         raise HTTPException(400, "corrected text is required")
-    saved = note_store.update_transcript_turn(note_id, body.turn_index, body.text)
+    saved = note_store.update_transcript_turn(
+        note_id, body.turn_index, body.text,
+        flag_index=body.flag_index, new_quote=body.new_quote,
+    )
     if not saved:
         raise HTTPException(404, "note or turn not found")
     return _saved_note_response(saved)
