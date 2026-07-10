@@ -20,6 +20,7 @@ import {
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
+import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
@@ -63,6 +64,10 @@ export default function TranscriptReviewPage({ noteId }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [activeFlag, setActiveFlag] = useState<number | null>(null);
+  // Which flag last drove playback, and whether audio is currently playing — so a
+  // flag's ▶ button can flip to ⏸ and stop the audio in place (no scroll-to-top).
+  const [playingFlag, setPlayingFlag] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const turnRefs = useRef<Record<number, HTMLDivElement | null>>({});
   // The highlighted <mark> element for each flag (by its index in `flags`), so we
   // can scroll to the EXACT phrase — not just the turn — which matters when
@@ -192,6 +197,10 @@ export default function TranscriptReviewPage({ noteId }: Props) {
     });
   }, []);
 
+  const pauseAudio = useCallback(() => {
+    audioRef.current?.pause();
+  }, []);
+
   const seekToTurn = useCallback(
     (idx: number) => {
       const turn = turns[idx];
@@ -233,6 +242,7 @@ export default function TranscriptReviewPage({ noteId }: Props) {
   const seekToFlag = useCallback(
     (flagIndex: number, turnIndex: number, quote: string) => {
       setActiveFlag(flagIndex);
+      setPlayingFlag(flagIndex);
       const mark = flagMarkRefs.current[flagIndex];
       (mark ?? turnRefs.current[turnIndex])?.scrollIntoView({
         behavior: "smooth",
@@ -243,6 +253,20 @@ export default function TranscriptReviewPage({ noteId }: Props) {
       if (typeof t === "number") seekToTime(t);
     },
     [timeForFlag, seekToTime],
+  );
+
+  // Play/pause toggle for a flag's ▶ button: if this flag is the one currently
+  // playing, pause in place; otherwise (re)seek to it and play. Lets the doctor
+  // stop the audio from the item without scrolling up to the player.
+  const toggleFlagPlay = useCallback(
+    (flagIndex: number, turnIndex: number, quote: string) => {
+      if (playingFlag === flagIndex && isPlaying) {
+        pauseAudio();
+      } else {
+        seekToFlag(flagIndex, turnIndex, quote);
+      }
+    },
+    [playingFlag, isPlaying, pauseAudio, seekToFlag],
   );
 
   const onCorrected = (updated: Note, category?: string) => {
@@ -367,6 +391,9 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                 controls
                 preload="none"
                 style={{ width: "100%" }}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => setIsPlaying(false)}
                 onTimeUpdate={() => {
                   const t = audioRef.current?.currentTime ?? 0;
                   const idx = turns.findIndex(
@@ -434,10 +461,11 @@ export default function TranscriptReviewPage({ noteId }: Props) {
                     flag={f}
                     context={flagContext(f)}
                     canSeek={hasAudio && typeof f.turn_index === "number"}
+                    playing={playingFlag === i && isPlaying}
                     busy={resolvingFlag === i}
                     onPlay={
                       typeof f.turn_index === "number"
-                        ? () => seekToFlag(i, f.turn_index!, f.quote)
+                        ? () => toggleFlagPlay(i, f.turn_index!, f.quote)
                         : undefined
                     }
                     onToggle={(resolved) => onToggleFlag(i, resolved)}
@@ -539,6 +567,7 @@ function FlagCard({
   flag,
   context,
   canSeek,
+  playing,
   busy,
   onPlay,
   onToggle,
@@ -547,6 +576,7 @@ function FlagCard({
   flag: ReviewFlag;
   context: { before: string; quote: string; after: string } | null;
   canSeek?: boolean;
+  playing?: boolean;
   busy?: boolean;
   onPlay?: () => void;
   onToggle?: (resolved: boolean) => void;
@@ -566,6 +596,19 @@ function FlagCard({
     setErr(null);
     setEditing(true);
   };
+
+  // Play/pause this flag's audio. `playing` = this flag is currently the one
+  // playing, so the button becomes ⏸ and stops it in place (no scroll to the
+  // player). Shown in the actions row AND inside the editor so you can still
+  // listen while correcting.
+  const playButton =
+    onPlay && canSeek ? (
+      <Tooltip title={playing ? "Durdur" : "Sesde bu ana git"}>
+        <IconButton size="small" onClick={onPlay} color="primary">
+          {playing ? <PauseRoundedIcon /> : <PlayArrowRoundedIcon />}
+        </IconButton>
+      </Tooltip>
+    ) : null;
   const saveEdit = async () => {
     if (!onCorrectPhrase) return;
     setSaving(true);
@@ -640,13 +683,15 @@ function FlagCard({
                 label="Doğru ifade"
               />
               {err && <Alert severity="error">{err}</Alert>}
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <Button size="small" variant="contained" onClick={saveEdit} disabled={saving}>
                   {saving ? "Kaydediliyor…" : "Kaydet"}
                 </Button>
                 <Button size="small" onClick={() => setEditing(false)} disabled={saving}>
                   Vazgeç
                 </Button>
+                {/* keep playback reachable while editing */}
+                {playButton}
               </Stack>
             </Stack>
           ) : null}
@@ -655,13 +700,7 @@ function FlagCard({
         {/* actions */}
         {!editing && (
           <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", flexShrink: 0 }}>
-            {onPlay && canSeek ? (
-              <Tooltip title="Sesde bu ana git">
-                <IconButton size="small" onClick={onPlay} color="primary">
-                  <PlayArrowRoundedIcon />
-                </IconButton>
-              </Tooltip>
-            ) : null}
+            {playButton}
             {!flag.resolved && onCorrectPhrase ? (
               <Tooltip title="Bu ifadeyi düzelt">
                 <IconButton size="small" onClick={startEdit}>
