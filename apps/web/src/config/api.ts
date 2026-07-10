@@ -293,6 +293,34 @@ export async function resolveFlag(
   return asJson<Note>(res);
 }
 
+/** Re-evaluate the note from its CURRENT (corrected) transcript and return the
+ * proposal WITHOUT persisting (ADR-0029). The returned Note carries `reeval` with
+ * the proposed note + current note so the UI can diff and accept/reject. */
+export async function reevaluateNote(id: string, signal?: AbortSignal): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/reevaluate`, {
+    method: "POST",
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
+/** Accept a re-evaluation proposal: persist the proposed note as the current body
+ * (a new version) + update the extracted lists and review flags. Returns the
+ * updated note. */
+export async function applyReevaluation(
+  id: string,
+  proposal: { note: string; problems?: unknown[]; medications?: unknown[]; review_flags?: unknown[] },
+  signal?: AbortSignal,
+): Promise<Note> {
+  const res = await fetch(`${API}/notes/${encodeURIComponent(id)}/reevaluate/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(proposal),
+    signal,
+  });
+  return asJson<Note>(res);
+}
+
 // ---------------------------------------------------------------------------
 // Transcript reuse + note history
 // ---------------------------------------------------------------------------

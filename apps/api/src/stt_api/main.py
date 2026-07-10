@@ -969,6 +969,100 @@ def extract_note_lists(note_id: str) -> dict:
     return _saved_note_response(updated)
 
 
+# --- re-evaluate the note from the corrected transcript (ADR-0029) ----------
+# After the doctor fixes STT errors in the transcript, the note was generated from
+# the OLD (wrong) text. Re-evaluation re-runs generation from the CURRENT turns and
+# returns the new note as a PROPOSAL (not persisted) so the doctor can compare it to
+# the current note and accept or reject it — like reviewing a diff. Accept applies
+# it via the normal edit overlay (snapshots a version, ADR-0020), so it's undoable.
+
+
+def _opts_from_saved(saved) -> "NoteOptions":
+    """Rebuild NoteOptions matching how the note was originally generated: same
+    provider (gated the same way), model, and template. A custom/'free' template's
+    sample text wasn't persisted, so fall back to a built-in key when needed."""
+    provider = saved.provider or _note_provider()
+    # Only honor the saved provider if it's still enabled; else fall back to default.
+    enabled = {p["key"] for p in list_providers()}
+    if provider not in enabled:
+        provider = _note_provider()
+    template = saved.template or "soap"
+    # We didn't persist the free/custom sample text; a "free" template needs one, so
+    # degrade to SOAP for re-evaluation rather than fail. Built-in keys pass through.
+    template_text = None
+    if template == "free":
+        template = "soap"
+    return NoteOptions(provider=provider, model=saved.model or None,
+                       template=template, template_text=template_text)
+
+
+@app.post("/notes/{note_id}/reevaluate")
+def reevaluate_note(note_id: str) -> dict:
+    """Re-generate the note from the note's CURRENT (corrected) transcript turns and
+    return it as a PROPOSAL without persisting. Response adds `reeval`:
+    {proposed_note, proposed_problems, proposed_medications, proposed_review_flags,
+     current_note}. The client shows a diff and calls .../reevaluate/apply to accept.
+    Sync (one generation) — FastAPI runs `def` handlers in a threadpool. 409 if the
+    note is finalized (reopen first); 400 if there's no transcript to summarize."""
+    from note_core import generate
+    from note_core.review import locate_flags
+
+    saved = note_store.get(note_id)
+    if not saved:
+        raise HTTPException(404, "note not found")
+    if saved.status == "final":
+        raise HTTPException(409, "note is finalized; reopen it before re-evaluating")
+    turns = saved.turns
+    transcript = _transcript_text({"turns": turns}) if turns else (saved.transcript or "")
+    if not transcript.strip():
+        raise HTTPException(400, "note has no transcript to re-evaluate")
+    try:
+        result = generate(transcript, _opts_from_saved(saved))
+    except ProviderError as e:
+        raise HTTPException(400, str(e))
+    # Locate the fresh review flags against the current turns for audio seek.
+    located = locate_flags(result.review_flags, turns) if turns else result.review_flags
+    out = _saved_note_response(saved)
+    out["reeval"] = {
+        "proposed_note": result.note,
+        "proposed_problems": result.problems,
+        "proposed_medications": result.medications,
+        "proposed_review_flags": located,
+        "current_note": saved.effective_note,
+        "provider": result.provider,
+        "model": result.model,
+    }
+    return out
+
+
+class ReevalApplyBody(BaseModel):
+    note: str
+    problems: Optional[list] = None
+    medications: Optional[list] = None
+    review_flags: Optional[list] = None
+
+
+@app.post("/notes/{note_id}/reevaluate/apply")
+def apply_reevaluation(note_id: str, body: ReevalApplyBody) -> dict:
+    """Accept a re-evaluation proposal: save the proposed note as the current body
+    (overlay + version snapshot, ADR-0020) and update the extracted lists + review
+    flags. 404 if unknown, 409 if finalized. The client sends back the proposal it
+    showed the doctor (so accept applies exactly what was reviewed)."""
+    if body.note is None:
+        raise HTTPException(400, "note body is required")
+    try:
+        saved = note_store.update_body(note_id, body.note)
+    except NoteLockedError as e:
+        raise HTTPException(409, str(e))
+    if not saved:
+        raise HTTPException(404, "note not found")
+    if body.problems is not None or body.medications is not None:
+        note_store.set_extraction(note_id, body.problems or [], body.medications or [])
+    if body.review_flags is not None:
+        note_store.set_review_flags(note_id, body.review_flags)
+    return _saved_note_response(note_store.get(note_id))
+
+
 # --- version history (ADR-0020) --------------------------------------------
 
 

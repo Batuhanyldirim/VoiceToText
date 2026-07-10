@@ -8,6 +8,7 @@ import {
   Chip,
   CircularProgress,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
@@ -44,7 +45,9 @@ import RestoreRoundedIcon from "@mui/icons-material/RestoreRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
 import AutoFixHighRoundedIcon from "@mui/icons-material/AutoFixHighRounded";
+import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import PatientSelector from "./PatientSelector";
+import NoteDiff from "./NoteDiff";
 import { markdownToPlainText, printNoteAsPdf } from "../utils/noteExport";
 import type {
   Medication,
@@ -53,6 +56,7 @@ import type {
   NoteStage,
   NoteVersion,
   Problem,
+  ReevalProposal,
   ReviewFlag,
   Turn,
 } from "../types";
@@ -60,12 +64,14 @@ import { navigate } from "../utils/router";
 import SourceTranscript from "./SourceTranscript";
 import {
   ApiError,
+  applyReevaluation,
   editNote,
   extractNote,
   finalizeNote,
   getNote,
   listNoteVersions,
   noteEventsUrl,
+  reevaluateNote,
   reopenNote,
   restoreNoteVersion,
   revertNote,
@@ -172,6 +178,10 @@ export default function NoteViewer({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [versions, setVersions] = useState<NoteVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
+  // Re-evaluation (ADR-0029): regenerate from the corrected transcript, then show a
+  // diff the doctor accepts or rejects (like a code review).
+  const [reevalBusy, setReevalBusy] = useState(false);
+  const [reevalProposal, setReevalProposal] = useState<ReevalProposal | null>(null);
   // The last body we successfully persisted, so autosave skips no-op saves.
   const savedBodyRef = useRef<string>("");
 
@@ -496,6 +506,51 @@ export default function NoteViewer({
       );
     } finally {
       setExtracting(false);
+    }
+  };
+
+  // --- re-evaluate from the corrected transcript (ADR-0029) ----------------
+  const doReevaluate = async () => {
+    setReevalBusy(true);
+    try {
+      const n = await reevaluateNote(noteId);
+      if (n.reeval) setReevalProposal(n.reeval);
+      else setToast("Yeniden değerlendirme sonucu alınamadı.");
+    } catch (e) {
+      setToast(
+        e instanceof ApiError && e.status === 409
+          ? "Not kilitli — yeniden değerlendirmek için önce yeniden açın."
+          : e instanceof ApiError
+            ? e.message
+            : "Yeniden değerlendirme başarısız oldu.",
+      );
+    } finally {
+      setReevalBusy(false);
+    }
+  };
+
+  const acceptReeval = async () => {
+    if (!reevalProposal) return;
+    setBusy(true);
+    try {
+      const n = await applyReevaluation(noteId, {
+        note: reevalProposal.proposed_note,
+        problems: reevalProposal.proposed_problems,
+        medications: reevalProposal.proposed_medications,
+        review_flags: reevalProposal.proposed_review_flags,
+      });
+      applyNote(n);
+      if (Array.isArray(n.problems)) setProblems(n.problems);
+      if (Array.isArray(n.medications)) setMedications(n.medications);
+      setExtracted(Boolean(n.extracted));
+      if (Array.isArray(n.review_flags)) setReviewFlags(n.review_flags);
+      setReevalProposal(null);
+      setToast("Yeniden değerlendirilen not kabul edildi.");
+      onSavedRef.current?.();
+    } catch (e) {
+      setToast(e instanceof ApiError ? e.message : "Kabul başarısız oldu.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1054,23 +1109,43 @@ export default function NoteViewer({
               (play the flagged moment, fix the text against the audio). */}
           {!editing && turns.length > 0 && reviewFlags.length > 0 && (() => {
             const open = reviewFlags.filter((f) => !f.resolved).length;
+            const corrected = reviewFlags.some((f) => f.resolution === "corrected");
             return (
               <Alert
                 severity={open ? "warning" : "success"}
                 icon={<WarningAmberRoundedIcon />}
                 action={
-                  <Button
-                    color="inherit"
-                    size="small"
-                    onClick={() => navigate(`/notes/${encodeURIComponent(noteId)}/review`)}
-                  >
-                    Deşifreyi incele
-                  </Button>
+                  <Stack direction="row" spacing={0.5}>
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={() => navigate(`/notes/${encodeURIComponent(noteId)}/review`)}
+                    >
+                      Deşifreyi incele
+                    </Button>
+                    {/* Once transcript errors are corrected, re-generate the note
+                        from the fixed text and review the diff (ADR-0029). */}
+                    {corrected && canEdit && (
+                      <Button
+                        color="inherit"
+                        size="small"
+                        startIcon={
+                          reevalBusy ? <CircularProgress size={14} /> : <AutorenewRoundedIcon />
+                        }
+                        onClick={() => void doReevaluate()}
+                        disabled={reevalBusy}
+                      >
+                        {reevalBusy ? "Değerlendiriliyor…" : "Yeniden değerlendir"}
+                      </Button>
+                    )}
+                  </Stack>
                 }
               >
                 {open
                   ? `${open} olası konuşma-tanıma hatası işaretlendi — sesle karşılaştırıp düzeltin.`
-                  : "Tüm işaretli ifadeler incelendi."}
+                  : corrected
+                    ? "İşaretli ifadeler düzeltildi — notu düzeltilen deşifreden yeniden değerlendirebilirsiniz."
+                    : "Tüm işaretli ifadeler incelendi."}
               </Alert>
             );
           })()}
@@ -1102,6 +1177,44 @@ export default function NoteViewer({
         message={toast ?? ""}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
+
+      {/* Re-evaluation diff (ADR-0029): current note → proposed (from corrected
+          transcript). Accept applies it as a new version; reject discards it. */}
+      <Dialog
+        open={reevalProposal !== null}
+        onClose={() => (busy ? null : setReevalProposal(null))}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>Yeniden değerlendirme — değişiklikleri gözden geçirin</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Not, düzeltilen deşifreden yeniden oluşturuldu. Aşağıda mevcut not (kırmızı)
+            ile önerilen not (yeşil) karşılaştırılıyor. Kabul ederseniz öneri yeni bir
+            sürüm olarak kaydedilir; reddederseniz mevcut not korunur.
+          </Typography>
+          {reevalProposal && (
+            <NoteDiff
+              current={reevalProposal.current_note}
+              proposed={reevalProposal.proposed_note}
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReevalProposal(null)} disabled={busy}>
+            Reddet
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={busy ? <CircularProgress size={16} /> : <CheckCircleRoundedIcon />}
+            onClick={() => void acceptReeval()}
+            disabled={busy}
+          >
+            Kabul et
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Version history (ADR-0020) — view + restore prior saved bodies. */}
       <Dialog open={historyOpen} onClose={() => setHistoryOpen(false)} maxWidth="sm" fullWidth>

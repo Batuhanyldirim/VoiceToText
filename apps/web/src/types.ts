@@ -346,6 +346,20 @@ export interface Note {
   review_flags?: ReviewFlag[];
   // Summary of an LLM speaker re-labeling run (ADR-0030), present on the /rediar response.
   rediar?: { applied: boolean; coverage: number; n_roles: number; provider?: string; model?: string };
+  // A re-evaluation PROPOSAL (ADR-0029): the note re-generated from the corrected
+  // transcript, returned by POST /notes/{id}/reevaluate WITHOUT persisting so the
+  // client can show a diff and accept/reject it.
+  reeval?: ReevalProposal;
+}
+
+export interface ReevalProposal {
+  proposed_note: string;
+  proposed_problems: Problem[];
+  proposed_medications: Medication[];
+  proposed_review_flags: ReviewFlag[];
+  current_note: string;
+  provider?: string;
+  model?: string;
 }
 
 /** A located STT-review flag: a likely-mistranscribed span the doctor should
