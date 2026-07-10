@@ -211,17 +211,55 @@ export default function TranscriptReviewPage({ noteId }: Props) {
     [turns, seekToTime],
   );
 
-  // Word-precise time for a flag's quote inside its turn: find the quote's char
-  // range, then the timestamped word covering that offset. Falls back to turn.start.
+  // Word-precise time for a flag's quote. PREFER the segments: each WhisperX
+  // segment carries its own accurate start time, so we find the segment whose text
+  // best matches the quote (Turkish-folded token overlap) and return its start.
+  // This is far more reliable than walking the turn's tokens against a flat word
+  // list — that moving-pointer alignment drifts badly across a long MERGED turn
+  // (e.g. a 500-char turn), landing the player tens of seconds off. Falls back to
+  // the token walk, then the turn start.
   const timeForFlag = useCallback(
     (quote: string, turnIndex: number): number | null => {
       const turn = turns[turnIndex];
       if (!turn) return null;
+
+      // 1) Best-matching segment by folded-token overlap of the quote.
+      const fold = (s: string) =>
+        s
+          .replace(/İ/g, "i")
+          .replace(/I/g, "ı")
+          .toLocaleLowerCase("tr")
+          .replace(/[^\p{L}\p{N}\s]/gu, " ")
+          .trim();
+      const qTokens = fold(quote).split(/\s+/).filter(Boolean);
+      if (qTokens.length && segments.length) {
+        const qSet = new Set(qTokens);
+        // Restrict to segments within the turn's time window when known (avoids a
+        // false match on the same words spoken elsewhere in a long recording).
+        const inWindow = (s: Segment) =>
+          typeof turn.start !== "number" ||
+          typeof turn.end !== "number" ||
+          typeof s.start !== "number" ||
+          (s.start >= turn.start - 0.5 && s.start <= turn.end + 0.5);
+        let best: { start: number; score: number } | null = null;
+        for (const s of segments) {
+          if (typeof s.start !== "number" || !inWindow(s)) continue;
+          const segTokens = fold(String(s.text ?? "")).split(/\s+/).filter(Boolean);
+          if (!segTokens.length) continue;
+          const segSet = new Set(segTokens);
+          const hits = qTokens.filter((t) => segSet.has(t)).length;
+          if (hits === 0) continue;
+          // coverage of the quote, lightly rewarding a tight segment
+          const score = hits / qTokens.length + (segTokens.filter((t) => qSet.has(t)).length / segTokens.length) * 0.25;
+          if (!best || score > best.score) best = { start: s.start, score };
+        }
+        if (best && best.score >= 0.5) return best.start;
+      }
+
+      // 2) Fallback: walk the turn's tokens against the flat word-time list.
       const range = findQuoteRange(turn.text || "", quote);
       const wt = turnWordTimes[turnIndex] || [];
       if (range) {
-        // Walk the tokens accumulating char length; the token covering range[0]
-        // carries the seek time.
         let pos = 0;
         for (const { tok, start } of wt) {
           if (pos + tok.length > range[0]) {
@@ -233,7 +271,7 @@ export default function TranscriptReviewPage({ noteId }: Props) {
       }
       return typeof turn.start === "number" ? turn.start : null;
     },
-    [turns, turnWordTimes],
+    [turns, turnWordTimes, segments],
   );
 
   // Jump to a specific FLAG: scroll to its exact highlighted phrase + pulse it, and
